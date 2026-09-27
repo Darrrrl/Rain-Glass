@@ -2,16 +2,48 @@ import Metal
 import SwiftUI
 
 struct ContentView: View {
+    @ObservedObject var wallpaper: WallpaperController
     @AppStorage(AppSettings.developerOverlayKey) private var developerOverlayEnabled = false
     @StateObject private var diagnostics = RenderDiagnostics()
-    private let device = MTLCreateSystemDefaultDevice()
 
     var body: some View {
         Group {
-            if let device {
+            if let device = wallpaper.device {
                 ZStack(alignment: .topLeading) {
-                    MetalView(device: device, diagnostics: diagnostics, continuousRendering: developerOverlayEnabled)
+                    MetalView(
+                        device: device,
+                        diagnostics: diagnostics,
+                        continuousRendering: developerOverlayEnabled,
+                        wallpaperTexture: wallpaper.texture,
+                        wallpaperRevision: wallpaper.revision,
+                        scaleMode: wallpaper.scaleMode,
+                        blurRadius: wallpaper.blurRadius
+                    )
                         .ignoresSafeArea()
+
+                    if wallpaper.texture == nil {
+                        VStack {
+                            Spacer()
+                            VStack(spacing: 12) {
+                                Text("Choose a wallpaper")
+                                    .font(.title2.weight(.semibold))
+                                Text("RainGlass will use your image as the scene behind the glass.")
+                                    .foregroundStyle(.secondary)
+                                Button("Choose Image…") { wallpaper.chooseImage() }
+                                    .buttonStyle(.borderedProminent)
+                                if wallpaper.isLoading { ProgressView() }
+                                if let error = wallpaper.errorMessage {
+                                    Text(error)
+                                        .foregroundStyle(.red)
+                                        .multilineTextAlignment(.center)
+                                }
+                            }
+                            .padding(24)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
 
                     if developerOverlayEnabled {
                         DeveloperOverlay(snapshot: diagnostics.snapshot)

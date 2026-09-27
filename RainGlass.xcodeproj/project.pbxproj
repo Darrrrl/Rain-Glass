@@ -15,6 +15,8 @@
 		100000000000000000000107 = {isa = PBXBuildFile; fileRef = 100000000000000000000207; };
 		100000000000000000000108 = {isa = PBXBuildFile; fileRef = 100000000000000000000208; };
 		100000000000000000000109 = {isa = PBXBuildFile; fileRef = 100000000000000000000209; };
+		100000000000000000000110 = {isa = PBXBuildFile; fileRef = 100000000000000000000211; };
+		100000000000000000000111 = {isa = PBXBuildFile; fileRef = 100000000000000000000212; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +30,8 @@
 		100000000000000000000208 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalRenderer.swift; sourceTree = "<group>"; };
 		100000000000000000000209 = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		100000000000000000000210 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RainGlass.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		100000000000000000000211 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WallpaperController.swift; sourceTree = "<group>"; };
+		100000000000000000000212 = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = WallpaperShaders.metal; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -36,12 +40,13 @@
 
 /* Begin PBXGroup section */
 		100000000000000000000401 = {isa = PBXGroup; children = (100000000000000000000402, 100000000000000000000406); sourceTree = "<group>"; };
-		100000000000000000000402 = {isa = PBXGroup; children = (100000000000000000000403, 100000000000000000000404, 100000000000000000000405, 100000000000000000000407); path = RainGlass; sourceTree = "<group>"; };
+		100000000000000000000402 = {isa = PBXGroup; children = (100000000000000000000403, 100000000000000000000404, 100000000000000000000408, 100000000000000000000405, 100000000000000000000407); path = RainGlass; sourceTree = "<group>"; };
 		100000000000000000000403 = {isa = PBXGroup; children = (100000000000000000000201, 100000000000000000000202); path = App; sourceTree = "<group>"; };
-		100000000000000000000404 = {isa = PBXGroup; children = (100000000000000000000206, 100000000000000000000207, 100000000000000000000208); path = Renderer; sourceTree = "<group>"; };
+		100000000000000000000404 = {isa = PBXGroup; children = (100000000000000000000206, 100000000000000000000207, 100000000000000000000208, 100000000000000000000212); path = Renderer; sourceTree = "<group>"; };
 		100000000000000000000405 = {isa = PBXGroup; children = (100000000000000000000203, 100000000000000000000204, 100000000000000000000205); path = UI; sourceTree = "<group>"; };
 		100000000000000000000406 = {isa = PBXGroup; children = (100000000000000000000210); name = Products; sourceTree = "<group>"; };
 		100000000000000000000407 = {isa = PBXGroup; children = (100000000000000000000209); path = Resources; sourceTree = "<group>"; };
+		100000000000000000000408 = {isa = PBXGroup; children = (100000000000000000000211); path = Wallpaper; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -57,7 +62,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		100000000000000000000302 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (100000000000000000000101, 100000000000000000000102, 100000000000000000000103, 100000000000000000000104, 100000000000000000000105, 100000000000000000000106, 100000000000000000000107, 100000000000000000000108); runOnlyForDeploymentPostprocessing = 0; };
+		100000000000000000000302 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (100000000000000000000101, 100000000000000000000102, 100000000000000000000103, 100000000000000000000104, 100000000000000000000105, 100000000000000000000106, 100000000000000000000107, 100000000000000000000108, 100000000000000000000110, 100000000000000000000111); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
