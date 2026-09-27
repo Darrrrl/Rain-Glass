@@ -109,7 +109,7 @@ final class RainSimulation {
                 if simd_distance(previous, droplets[index].position) >= 0.9 {
                     trails.append(TrailSegment(
                         start: previous, end: droplets[index].position,
-                        radius: max(0.8, radius * 0.42), age: 0, lifetime: 4.5
+                        radius: max(0.55, min(2.2, radius * 0.16)), age: 0, lifetime: 4.5
                     ))
                 }
             }

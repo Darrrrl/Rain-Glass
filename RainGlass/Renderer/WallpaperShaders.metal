@@ -92,7 +92,7 @@ fragment float4 dropletFragment(DropletVertex in [[stage_in]]) {
                                 (p - float2(0.27, 0.73)) * float2(2.5, 9.0)) * 1.5);
     float darkRim = edge * (0.45 + 0.25 * p.y);
     float light = saturate(upperGlint * 0.8 + lowerGlint * 0.5);
-    float alpha = in.opacity * (0.09 + darkRim * 0.44 + light * 0.63);
+    float alpha = in.opacity * (0.035 + darkRim * 0.22 + light * 0.36);
     alpha *= 1 - smoothstep(0.97, 1.0, distance);
     float3 color = mix(float3(0.025, 0.035, 0.05), float3(0.96, 0.98, 1.0), light);
     return float4(color, saturate(alpha));
@@ -129,9 +129,49 @@ vertex TrailVertex trailVertex(
 }
 
 fragment float4 trailFragment(TrailVertex in [[stage_in]]) {
-    float ridge = 1 - smoothstep(0.35, 1, abs(in.local.x));
-    float rim = smoothstep(0.65, 1, abs(in.local.x));
-    float alpha = in.opacity * (ridge * 0.10 + rim * 0.16);
-    float3 color = mix(float3(0.95), float3(0.025, 0.035, 0.05), rim);
+    float ridge = 1 - smoothstep(0.2, 1, abs(in.local.x));
+    float alpha = in.opacity * ridge * 0.055;
+    float3 color = float3(0.97, 0.98, 1.0);
     return float4(color, alpha);
+}
+
+fragment float4 waterDropletFragment(DropletVertex in [[stage_in]]) {
+    float radiusSquared = dot(in.local, in.local);
+    if (radiusSquared >= 1) { discard_fragment(); }
+    float height = sqrt(max(0.0, 1.0 - radiusSquared)) * in.opacity;
+    return float4(height, 0, 0, 1);
+}
+
+fragment float4 waterTrailFragment(TrailVertex in [[stage_in]]) {
+    float ridge = max(0.0, 1.0 - abs(in.local.x));
+    return float4(ridge * in.opacity * 0.18, 0, 0, 1);
+}
+
+fragment float4 wetGlassFragment(
+    FullscreenVertex in [[stage_in]],
+    texture2d<float> sharp [[texture(0)]],
+    texture2d<float> blurred [[texture(1)]],
+    texture2d<float> water [[texture(2)]],
+    sampler imageSampler [[sampler(0)]],
+    constant float4& settings [[buffer(0)]]
+) {
+    float2 uv = in.position.xy / settings.xy;
+    if (settings.z <= 0.0) {
+        return float4(blurred.sample(imageSampler, uv).rgb, 1);
+    }
+    float2 pixel = 1.0 / float2(water.get_width(), water.get_height());
+    float height = water.sample(imageSampler, uv).r;
+    float2 slope = float2(
+        water.sample(imageSampler, uv + float2(pixel.x, 0)).r - water.sample(imageSampler, uv - float2(pixel.x, 0)).r,
+        water.sample(imageSampler, uv + float2(0, pixel.y)).r - water.sample(imageSampler, uv - float2(0, pixel.y)).r
+    );
+    float2 refractedUV = clamp(uv - slope * settings.z * 0.018, 0.0, 1.0);
+    float3 clearColor = sharp.sample(imageSampler, refractedUV).rgb;
+    float3 softColor = blurred.sample(imageSampler, uv).rgb;
+    float focus = saturate(height * 1.7);
+    float3 color = mix(softColor, clearColor, settings.w > 0 ? focus : 1.0);
+    float edge = saturate(length(slope) * 0.35);
+    color *= 1 - edge * 0.09;
+    color += float3(0.012) * edge;
+    return float4(color, 1);
 }
