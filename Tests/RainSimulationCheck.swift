@@ -17,6 +17,13 @@ struct RainSimulationCheck {
         assert(first.droplets.contains(where: { !$0.pinned }))
         assert(first.droplets.allSatisfy { $0.mass > 0 && $0.lifetime > 0 })
 
+        let initialMass = first.droplets.reduce(Float.zero) { $0 + $1.mass }
+        for _ in 0..<4 { first.step(dt: 1.0 / 120.0) }
+        let mergedMass = first.droplets.reduce(Float.zero) { $0 + $1.mass }
+        assert(mergedMass >= initialMass * 0.9999)
+        assert(first.droplets.allSatisfy { abs($0.mass - $0.radius * $0.radius * $0.radius) < max(0.01, $0.mass * 0.0001) })
+        first.reset(seed: 42)
+
         for _ in 0..<600 {
             first.step(dt: 1.0 / 120.0)
             second.step(dt: 1.0 / 120.0)
@@ -28,6 +35,8 @@ struct RainSimulationCheck {
             assert(left.mass == right.mass)
             assert(left.age == right.age)
         }
+        assert(first.trails.count <= RainSimulation.maximumTrails)
+        assert(first.trails.count == second.trails.count)
 
         let third = RainSimulation(seed: 43)
         third.resize(to: size)

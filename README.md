@@ -19,4 +19,4 @@ The developer overlay shows FPS, CPU time spent encoding and submitting each fra
 - **UI** owns the window content, settings controls, and diagnostic overlay.
 - Future **Audio** and **Weather** areas will own their respective state and services. They will feed the renderer through explicit data rather than reaching into its Metal internals.
 
-Droplet merging, trails, and refraction are later milestones. Audio and weather integration are later milestones.
+Droplets merge when they touch, sliding drops collect smaller ones, and their trails fade. Refraction is the next rendering milestone. Audio and weather integration come later.

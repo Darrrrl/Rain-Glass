@@ -14,6 +14,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private let wallpaperPipeline: MTLRenderPipelineState?
     private let displayPipeline: MTLRenderPipelineState?
     private let dropletPipeline: MTLRenderPipelineState?
+    private let trailPipeline: MTLRenderPipelineState?
     private let sampler: MTLSamplerState?
     private let diagnostics: RenderDiagnostics
     private let simulation = RainSimulation(seed: UInt64.random(in: UInt64.min...UInt64.max))
@@ -21,7 +22,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private var lastFrameTime: CFAbsoluteTime = 0
     private var simulationAccumulator: Float = 0
     private var renderInstances: [DropletRenderInstance] = []
+    private var trailInstances: [TrailRenderInstance] = []
     private var instanceBuffers: [MTLBuffer] = []
+    private var trailBuffers: [MTLBuffer] = []
     private var nextInstanceBuffer = 0
     private let framesInFlight = DispatchSemaphore(value: 3)
     private weak var observedWindow: NSWindow?
@@ -68,9 +71,21 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         dropletDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
         dropletDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         dropletPipeline = try? device.makeRenderPipelineState(descriptor: dropletDescriptor)
+        let trailDescriptor = MTLRenderPipelineDescriptor()
+        trailDescriptor.vertexFunction = library?.makeFunction(name: "trailVertex")
+        trailDescriptor.fragmentFunction = library?.makeFunction(name: "trailFragment")
+        trailDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm_srgb
+        trailDescriptor.colorAttachments[0].isBlendingEnabled = true
+        trailDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        trailDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        trailPipeline = try? device.makeRenderPipelineState(descriptor: trailDescriptor)
         let bufferLength = 6_000 * MemoryLayout<DropletRenderInstance>.stride
         instanceBuffers = (0..<3).compactMap { _ in
             device.makeBuffer(length: bufferLength, options: .storageModeShared)
+        }
+        let trailLength = RainSimulation.maximumTrails * MemoryLayout<TrailRenderInstance>.stride
+        trailBuffers = (0..<3).compactMap { _ in
+            device.makeBuffer(length: trailLength, options: .storageModeShared)
         }
 
         let samplerDescriptor = MTLSamplerDescriptor()
@@ -190,20 +205,31 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             encoder.setFragmentBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         }
-        if let dropletPipeline, !instanceBuffers.isEmpty {
+        if let dropletPipeline, let trailPipeline, instanceBuffers.count == 3, trailBuffers.count == 3 {
             simulation.renderInstances(into: &renderInstances)
+            simulation.trailInstances(into: &trailInstances)
             let byteCount = renderInstances.count * MemoryLayout<DropletRenderInstance>.stride
             if byteCount > 0 {
                 framesInFlight.wait()
                 let buffer = instanceBuffers[nextInstanceBuffer]
+                let trailBuffer = trailBuffers[nextInstanceBuffer]
                 nextInstanceBuffer = (nextInstanceBuffer + 1) % instanceBuffers.count
                 renderInstances.withUnsafeBytes { source in
                     buffer.contents().copyMemory(from: source.baseAddress!, byteCount: byteCount)
                 }
-                encoder.setRenderPipelineState(dropletPipeline)
-                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
                 var viewportPoints = SIMD2<Float>(Float(view.bounds.width), Float(view.bounds.height))
                 encoder.setVertexBytes(&viewportPoints, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+                if !trailInstances.isEmpty {
+                    let trailBytes = trailInstances.count * MemoryLayout<TrailRenderInstance>.stride
+                    trailInstances.withUnsafeBytes { source in
+                        trailBuffer.contents().copyMemory(from: source.baseAddress!, byteCount: trailBytes)
+                    }
+                    encoder.setRenderPipelineState(trailPipeline)
+                    encoder.setVertexBuffer(trailBuffer, offset: 0, index: 0)
+                    encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: trailInstances.count)
+                }
+                encoder.setRenderPipelineState(dropletPipeline)
+                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: renderInstances.count)
                 commandBuffer.addCompletedHandler { [framesInFlight] _ in framesInFlight.signal() }
             }

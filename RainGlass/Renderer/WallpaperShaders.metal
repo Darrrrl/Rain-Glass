@@ -97,3 +97,41 @@ fragment float4 dropletFragment(DropletVertex in [[stage_in]]) {
     float3 color = mix(float3(0.025, 0.035, 0.05), float3(0.96, 0.98, 1.0), light);
     return float4(color, saturate(alpha));
 }
+
+struct TrailVertex {
+    float4 position [[position]];
+    float2 local;
+    float opacity;
+};
+
+vertex TrailVertex trailVertex(
+    uint vertexID [[vertex_id]],
+    uint instanceID [[instance_id]],
+    constant DropletInstance* trails [[buffer(0)]],
+    constant float2& viewportPoints [[buffer(1)]]
+) {
+    const float2 corners[6] = {
+        float2(-1, -1), float2(1, -1), float2(-1, 1),
+        float2(-1, 1), float2(1, -1), float2(1, 1)
+    };
+    DropletInstance trail = trails[instanceID];
+    float2 start = trail.geometry.xy;
+    float2 end = trail.geometry.zw;
+    float2 tangent = normalize(end - start + float2(0.0001, 0));
+    float2 normal = float2(-tangent.y, tangent.x);
+    float2 local = corners[vertexID];
+    float2 point = mix(start, end, (local.y + 1) * 0.5) + normal * local.x * trail.appearance.x;
+    TrailVertex out;
+    out.position = float4(point.x / viewportPoints.x * 2 - 1, 1 - point.y / viewportPoints.y * 2, 0, 1);
+    out.local = local;
+    out.opacity = trail.appearance.y;
+    return out;
+}
+
+fragment float4 trailFragment(TrailVertex in [[stage_in]]) {
+    float ridge = 1 - smoothstep(0.35, 1, abs(in.local.x));
+    float rim = smoothstep(0.65, 1, abs(in.local.x));
+    float alpha = in.opacity * (ridge * 0.10 + rim * 0.16);
+    float3 color = mix(float3(0.95), float3(0.025, 0.035, 0.05), rim);
+    return float4(color, alpha);
+}
