@@ -38,6 +38,16 @@ struct RainSimulationCheck {
         assert(first.trails.count <= RainSimulation.maximumTrails)
         assert(first.trails.count == second.trails.count)
 
+        let countBeforeTransition = first.droplets.count
+        first.setParameters(BuiltInRainPreset.storm.parameters)
+        assert(first.droplets.count == countBeforeTransition)
+        first.step(dt: 1.0 / 120.0)
+        assert(first.currentParameters.intensity > RainParameters.rain.intensity)
+        assert(first.currentParameters.intensity < BuiltInRainPreset.storm.parameters.intensity)
+        for _ in 0..<240 { first.step(dt: 1.0 / 120.0) }
+        assert(first.droplets.count <= RainSimulation.maximumDroplets)
+        assert(first.trails.count <= RainSimulation.maximumTrails)
+
         let third = RainSimulation(seed: 43)
         third.resize(to: size)
         assert(first.droplets[0].position != third.droplets[0].position)
@@ -45,6 +55,12 @@ struct RainSimulationCheck {
         let originalPosition = first.droplets[0].position
         first.resize(to: CGSize(width: 2880, height: 1800))
         assert(first.droplets[0].position == originalPosition * 2)
-        print("RainSimulation deterministic, populated, and resize-safe")
+
+        var dry = BuiltInRainPreset.drizzle.parameters
+        dry.intensity = 0
+        first.setParameters(dry)
+        for _ in 0..<720 { first.step(dt: 1.0 / 120.0) }
+        assert(first.droplets.isEmpty)
+        print("RainSimulation deterministic, bounded, transition-safe, and resize-safe")
     }
 }

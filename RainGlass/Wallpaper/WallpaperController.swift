@@ -34,17 +34,11 @@ final class WallpaperController: ObservableObject {
         didSet { UserDefaults.standard.set(scaleMode.rawValue, forKey: AppSettings.wallpaperScaleModeKey) }
     }
 
-    @Published var blurRadius: Double {
-        didSet { UserDefaults.standard.set(blurRadius, forKey: AppSettings.wallpaperBlurRadiusKey) }
-    }
-
     private var loadID = 0
 
     init() {
         let storedMode = UserDefaults.standard.string(forKey: AppSettings.wallpaperScaleModeKey)
         scaleMode = WallpaperScaleMode(rawValue: storedMode ?? "") ?? .fill
-        let storedBlur = UserDefaults.standard.object(forKey: AppSettings.wallpaperBlurRadiusKey) as? Double
-        blurRadius = min(max(storedBlur ?? 2, 0), 8)
         Task { restoreWallpaper() }
     }
 

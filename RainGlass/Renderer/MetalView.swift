@@ -8,7 +8,7 @@ struct MetalView: NSViewRepresentable {
     let wallpaperTexture: MTLTexture?
     let wallpaperRevision: Int
     let scaleMode: WallpaperScaleMode
-    let blurRadius: Double
+    let parameters: RainParameters
     let rainSeed: String
 
     func makeCoordinator() -> MetalRenderer {
@@ -34,11 +34,11 @@ struct MetalView: NSViewRepresentable {
     func updateNSView(_ view: RainMetalView, context: Context) {
         context.coordinator.setDiagnosticsEnabled(diagnosticsEnabled)
         context.coordinator.setRainSeed(rainSeed, in: view)
+        context.coordinator.setSceneParameters(parameters, in: view)
         context.coordinator.setWallpaper(
             texture: wallpaperTexture,
             revision: wallpaperRevision,
             scaleMode: scaleMode,
-            blurRadius: blurRadius,
             in: view
         )
         context.coordinator.observeWindow(of: view)

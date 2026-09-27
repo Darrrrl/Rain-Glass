@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var wallpaper: WallpaperController
+    @ObservedObject var rainSettings: RainSettingsStore
     @AppStorage(AppSettings.developerOverlayKey) private var developerOverlayEnabled = false
     @AppStorage(AppSettings.rainSeedKey) private var rainSeed = ""
     @StateObject private var diagnostics = RenderDiagnostics()
@@ -18,7 +19,7 @@ struct ContentView: View {
                         wallpaperTexture: wallpaper.texture,
                         wallpaperRevision: wallpaper.revision,
                         scaleMode: wallpaper.scaleMode,
-                        blurRadius: wallpaper.blurRadius,
+                        parameters: rainSettings.parameters,
                         rainSeed: rainSeed
                     )
                         .ignoresSafeArea()

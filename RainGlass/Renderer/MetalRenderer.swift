@@ -37,6 +37,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private var wallpaperRevision = -1
     private var scaleMode: WallpaperScaleMode = .fill
     private var blurRadius = 2.0
+    private var targetBlurRadius = 2.0
     private var backgroundDirty = true
     private var sharpBackground: MTLTexture?
     private var blurredBackground: MTLTexture?
@@ -125,6 +126,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         samplerDescriptor.tAddressMode = .clampToEdge
         sampler = device.makeSamplerState(descriptor: samplerDescriptor)
         super.init()
+        assert(waterDropletPipeline != nil && waterTrailPipeline != nil && wetGlassPipeline != nil,
+               "RainGlass could not create the water refraction pipelines")
     }
 
     deinit {
@@ -135,6 +138,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     @MainActor
     func setRainSeed(_ raw: String, in view: MTKView) {
+        guard raw.isEmpty || UInt64(raw) != nil else { return }
         guard rainSeed != raw else { return }
         rainSeed = raw
         simulation.reset(seed: UInt64(raw) ?? UInt64.random(in: UInt64.min...UInt64.max))
@@ -182,12 +186,18 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     @MainActor
-    func setWallpaper(texture: MTLTexture?, revision: Int, scaleMode: WallpaperScaleMode, blurRadius: Double, in view: MTKView) {
-        guard wallpaperRevision != revision || self.scaleMode != scaleMode || self.blurRadius != blurRadius else { return }
+    func setSceneParameters(_ parameters: RainParameters, in view: MTKView) {
+        simulation.setParameters(parameters)
+        targetBlurRadius = parameters.blur
+        view.needsDisplay = true
+    }
+
+    @MainActor
+    func setWallpaper(texture: MTLTexture?, revision: Int, scaleMode: WallpaperScaleMode, in view: MTKView) {
+        guard wallpaperRevision != revision || self.scaleMode != scaleMode else { return }
         wallpaperTexture = texture
         wallpaperRevision = revision
         self.scaleMode = scaleMode
-        self.blurRadius = blurRadius
         backgroundDirty = true
         view.needsDisplay = true
     }
@@ -213,6 +223,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             steps += 1
         }
         if steps == 4 { simulationAccumulator = 0 }
+        let desiredBlur = simulation.currentParameters.blur
+        if abs(desiredBlur - blurRadius) >= 0.4 ||
+            (abs(desiredBlur - blurRadius) > 0.02 && abs(desiredBlur - targetBlurRadius) < 0.03) {
+            blurRadius = desiredBlur
+            backgroundDirty = true
+        }
+        refractionStrength = Float(simulation.currentParameters.refraction)
         guard let commandQueue,
               let descriptor = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
@@ -239,13 +256,15 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         simulation.trailInstances(into: &trailInstances)
         var dropBuffer: MTLBuffer?
         var trailBuffer: MTLBuffer?
-        if !renderInstances.isEmpty, instanceBuffers.count == 3, trailBuffers.count == 3 {
+        if (!renderInstances.isEmpty || !trailInstances.isEmpty), instanceBuffers.count == 3, trailBuffers.count == 3 {
             framesInFlight.wait()
             dropBuffer = instanceBuffers[nextInstanceBuffer]
             trailBuffer = trailBuffers[nextInstanceBuffer]
             nextInstanceBuffer = (nextInstanceBuffer + 1) % 3
-            renderInstances.withUnsafeBytes { source in
-                dropBuffer!.contents().copyMemory(from: source.baseAddress!, byteCount: source.count)
+            if !renderInstances.isEmpty {
+                renderInstances.withUnsafeBytes { source in
+                    dropBuffer!.contents().copyMemory(from: source.baseAddress!, byteCount: source.count)
+                }
             }
             if !trailInstances.isEmpty {
                 trailInstances.withUnsafeBytes { source in
@@ -256,23 +275,26 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         var viewportPoints = SIMD2<Float>(Float(view.bounds.width), Float(view.bounds.height))
 
         var waterEncoded = false
-        if let waterHeight, let dropBuffer, let trailBuffer,
-           let waterDropletPipeline, let waterTrailPipeline {
+        if let waterHeight {
             let pass = MTLRenderPassDescriptor()
             pass.colorAttachments[0].texture = waterHeight
             pass.colorAttachments[0].loadAction = .clear
             pass.colorAttachments[0].storeAction = .store
             pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
             if let waterEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) {
-                waterEncoder.setVertexBytes(&viewportPoints, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-                if !trailInstances.isEmpty {
-                    waterEncoder.setRenderPipelineState(waterTrailPipeline)
-                    waterEncoder.setVertexBuffer(trailBuffer, offset: 0, index: 0)
-                    waterEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: trailInstances.count)
+                if let dropBuffer, let trailBuffer, let waterDropletPipeline, let waterTrailPipeline {
+                    waterEncoder.setVertexBytes(&viewportPoints, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+                    if !trailInstances.isEmpty {
+                        waterEncoder.setRenderPipelineState(waterTrailPipeline)
+                        waterEncoder.setVertexBuffer(trailBuffer, offset: 0, index: 0)
+                        waterEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: trailInstances.count)
+                    }
+                    if !renderInstances.isEmpty {
+                        waterEncoder.setRenderPipelineState(waterDropletPipeline)
+                        waterEncoder.setVertexBuffer(dropBuffer, offset: 0, index: 0)
+                        waterEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: renderInstances.count)
+                    }
                 }
-                waterEncoder.setRenderPipelineState(waterDropletPipeline)
-                waterEncoder.setVertexBuffer(dropBuffer, offset: 0, index: 0)
-                waterEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: renderInstances.count)
                 waterEncoder.endEncoding()
                 waterEncoded = true
             }
@@ -308,9 +330,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 encoder.setVertexBuffer(trailBuffer, offset: 0, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: trailInstances.count)
             }
-            encoder.setRenderPipelineState(dropletPipeline)
-            encoder.setVertexBuffer(dropBuffer, offset: 0, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: renderInstances.count)
+            if !renderInstances.isEmpty {
+                encoder.setRenderPipelineState(dropletPipeline)
+                encoder.setVertexBuffer(dropBuffer, offset: 0, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: renderInstances.count)
+            }
         }
         encoder.endEncoding()
         if dropBuffer != nil {

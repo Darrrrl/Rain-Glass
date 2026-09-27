@@ -64,9 +64,15 @@ final class RainSimulation {
     private var random: SplitMix64
     private var spawnCredit: Float = 0
     private var collisionCredit: Float = 0
+    private(set) var currentParameters = RainParameters.rain
+    private var targetParameters = RainParameters.rain
 
     init(seed: UInt64) {
         random = SplitMix64(seed: seed)
+    }
+
+    func setParameters(_ parameters: RainParameters) {
+        targetParameters = parameters.clamped()
     }
 
     func reset(seed: UInt64) {
@@ -97,19 +103,36 @@ final class RainSimulation {
 
     func step(dt: Float) {
         guard viewport.width > 0, viewport.height > 0 else { return }
+        let previousSize = currentParameters.dropletSize
+        let previousPersistence = currentParameters.trailPersistence
+        currentParameters = currentParameters.approaching(targetParameters, fraction: 1 - exp(-Double(dt) * 2.2))
+        let sizeRatio = Float(currentParameters.dropletSize / max(previousSize, 0.01))
+        if abs(sizeRatio - 1) > 0.00001 {
+            for index in droplets.indices {
+                droplets[index].radius *= sizeRatio
+                droplets[index].mass *= sizeRatio * sizeRatio * sizeRatio
+            }
+        }
+        let persistenceRatio = Float(currentParameters.trailPersistence / max(previousPersistence, 0.01))
+        if abs(persistenceRatio - 1) > 0.00001 {
+            for index in trails.indices { trails[index].lifetime *= persistenceRatio }
+        }
         for index in droplets.indices {
             droplets[index].age += dt
             if !droplets[index].pinned {
                 let radius = droplets[index].radius
-                let acceleration = max(0, 120 - droplets[index].friction * 5 / radius)
+                let baseGravity = Float(currentParameters.gravity * (0.75 + currentParameters.intensity * 0.5))
+                let acceleration = max(0, 120 * baseGravity - droplets[index].friction * 5 / radius)
                 droplets[index].velocity.y = min(180, droplets[index].velocity.y + acceleration * dt)
-                droplets[index].velocity.x = sin(droplets[index].age * 1.7 + droplets[index].phase) * min(4, radius * 0.2)
+                droplets[index].velocity.x = Float(currentParameters.wind * 38) +
+                    sin(droplets[index].age * 1.7 + droplets[index].phase) * min(4, radius * 0.2)
                 let previous = droplets[index].position
                 droplets[index].position += droplets[index].velocity * dt
                 if simd_distance(previous, droplets[index].position) >= 0.9 {
                     trails.append(TrailSegment(
                         start: previous, end: droplets[index].position,
-                        radius: max(0.55, min(2.2, radius * 0.16)), age: 0, lifetime: 4.5
+                        radius: max(0.55, min(2.2, radius * 0.16)), age: 0,
+                        lifetime: Float(currentParameters.trailPersistence)
                     ))
                 }
             }
@@ -156,7 +179,7 @@ final class RainSimulation {
 
     private func populate() {
         guard viewport.width > 0, viewport.height > 0 else { return }
-        let target = min(Self.maximumDroplets, max(800, Int(viewport.width * viewport.height / 200)))
+        let target = targetCount
         if droplets.count > target {
             droplets.removeLast(droplets.count - target)
         }
@@ -167,13 +190,19 @@ final class RainSimulation {
     }
 
     private func replenish(dt: Float) {
-        let target = min(Self.maximumDroplets, max(800, Int(viewport.width * viewport.height / 200)))
-        spawnCredit += dt * Float(max(40, target / 8))
-        let allowance = min(Int(spawnCredit), 12)
+        let target = targetCount
+        spawnCredit += dt * Float(max(60, max(target, droplets.count)))
+        let allowance = min(Int(spawnCredit), 36)
         spawnCredit -= Float(allowance)
-        for _ in 0..<min(allowance, max(0, target - droplets.count)) {
-            droplets.append(makeDroplet())
+        if droplets.count < target {
+            for _ in 0..<min(allowance, target - droplets.count) { droplets.append(makeDroplet()) }
+        } else if droplets.count > target {
+            droplets.removeLast(min(allowance, droplets.count - target))
         }
+    }
+
+    private var targetCount: Int {
+        min(Self.maximumDroplets, max(0, Int(currentParameters.dropCount * currentParameters.intensity)))
     }
 
     private func mergeCollisions() {
@@ -230,14 +259,15 @@ final class RainSimulation {
     private func makeDroplet() -> Droplet {
         let classRoll = random.unit()
         let radius: Float
+        let size = Float(currentParameters.dropletSize)
         if classRoll < 0.83 {
-            radius = random.range(0.8, 2.8)
+            radius = random.range(0.8, 2.8) * size
         } else if classRoll < 0.96 {
-            radius = random.range(2.8, 5.2)
+            radius = random.range(2.8, 5.2) * size
         } else {
-            radius = random.range(6, 15)
+            radius = random.range(6, 15) * size
         }
-        let pinned = radius < 4.8
+        let pinned = radius < 4.8 * size
         let lifetime = pinned ? random.range(45, 125) : random.range(14, 40)
         return Droplet(
             position: SIMD2(random.range(0, Float(viewport.width)), random.range(0, Float(viewport.height))),
