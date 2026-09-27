@@ -4,6 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var wallpaper: WallpaperController
     @AppStorage(AppSettings.developerOverlayKey) private var developerOverlayEnabled = false
+    @AppStorage(AppSettings.rainSeedKey) private var rainSeed = ""
     @StateObject private var diagnostics = RenderDiagnostics()
 
     var body: some View {
@@ -13,11 +14,12 @@ struct ContentView: View {
                     MetalView(
                         device: device,
                         diagnostics: diagnostics,
-                        continuousRendering: developerOverlayEnabled,
+                        diagnosticsEnabled: developerOverlayEnabled,
                         wallpaperTexture: wallpaper.texture,
                         wallpaperRevision: wallpaper.revision,
                         scaleMode: wallpaper.scaleMode,
-                        blurRadius: wallpaper.blurRadius
+                        blurRadius: wallpaper.blurRadius,
+                        rainSeed: rainSeed
                     )
                         .ignoresSafeArea()
 

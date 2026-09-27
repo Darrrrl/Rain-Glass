@@ -46,3 +46,54 @@ fragment float4 displayBackgroundFragment(
 ) {
     return background.sample(imageSampler, in.position.xy / viewportSize);
 }
+
+struct DropletInstance {
+    float4 geometry;
+    float4 appearance;
+};
+
+struct DropletVertex {
+    float4 position [[position]];
+    float2 local;
+    float opacity;
+    float phase;
+};
+
+vertex DropletVertex dropletVertex(
+    uint vertexID [[vertex_id]],
+    uint instanceID [[instance_id]],
+    constant DropletInstance* droplets [[buffer(0)]],
+    constant float2& viewportPoints [[buffer(1)]]
+) {
+    const float2 corners[6] = {
+        float2(-1, -1), float2(1, -1), float2(-1, 1),
+        float2(-1, 1), float2(1, -1), float2(1, 1)
+    };
+    DropletInstance drop = droplets[instanceID];
+    float2 local = corners[vertexID];
+    float2 point = drop.geometry.xy + local * drop.geometry.z * float2(1, drop.geometry.w);
+    DropletVertex out;
+    out.position = float4(point.x / viewportPoints.x * 2 - 1, 1 - point.y / viewportPoints.y * 2, 0, 1);
+    out.local = local;
+    out.opacity = drop.appearance.x;
+    out.phase = drop.appearance.y;
+    return out;
+}
+
+fragment float4 dropletFragment(DropletVertex in [[stage_in]]) {
+    float2 p = in.local;
+    float distance = length(p);
+    if (distance >= 1) { discard_fragment(); }
+
+    float edge = smoothstep(0.68, 0.98, distance);
+    float upperGlint = exp(-dot((p - float2(-0.36, -0.43)) * float2(2.4, 3.8),
+                                (p - float2(-0.36, -0.43)) * float2(2.4, 3.8)) * 2.1);
+    float lowerGlint = exp(-dot((p - float2(0.27, 0.73)) * float2(2.5, 9.0),
+                                (p - float2(0.27, 0.73)) * float2(2.5, 9.0)) * 1.5);
+    float darkRim = edge * (0.45 + 0.25 * p.y);
+    float light = saturate(upperGlint * 0.8 + lowerGlint * 0.5);
+    float alpha = in.opacity * (0.09 + darkRim * 0.44 + light * 0.63);
+    alpha *= 1 - smoothstep(0.97, 1.0, distance);
+    float3 color = mix(float3(0.025, 0.035, 0.05), float3(0.96, 0.98, 1.0), light);
+    return float4(color, saturate(alpha));
+}

@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var wallpaper: WallpaperController
     @AppStorage(AppSettings.developerOverlayKey) private var developerOverlayEnabled = false
+    @AppStorage(AppSettings.rainSeedKey) private var rainSeed = ""
 
     var body: some View {
         Form {
@@ -30,11 +31,13 @@ struct SettingsView: View {
                 }
             }
             Section("Developer") {
-            Toggle("Show developer overlay", isOn: $developerOverlayEnabled)
-                .help("Shows render rate, CPU frame time, and drawable size. Enables continuous rendering while visible.")
+                Toggle("Show developer overlay", isOn: $developerOverlayEnabled)
+                    .help("Shows render rate, CPU frame time, and drawable size.")
+                TextField("Rain seed", text: $rainSeed)
+                    .help("Optional unsigned integer for repeatable rain. Leave empty for a random seed each launch.")
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 330)
+        .frame(width: 480, height: 370)
     }
 }

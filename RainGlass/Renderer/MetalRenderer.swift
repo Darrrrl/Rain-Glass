@@ -13,8 +13,19 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private let commandQueue: MTLCommandQueue?
     private let wallpaperPipeline: MTLRenderPipelineState?
     private let displayPipeline: MTLRenderPipelineState?
+    private let dropletPipeline: MTLRenderPipelineState?
     private let sampler: MTLSamplerState?
     private let diagnostics: RenderDiagnostics
+    private let simulation = RainSimulation(seed: UInt64.random(in: UInt64.min...UInt64.max))
+    private var rainSeed = ""
+    private var lastFrameTime: CFAbsoluteTime = 0
+    private var simulationAccumulator: Float = 0
+    private var renderInstances: [DropletRenderInstance] = []
+    private var instanceBuffers: [MTLBuffer] = []
+    private var nextInstanceBuffer = 0
+    private let framesInFlight = DispatchSemaphore(value: 3)
+    private weak var observedWindow: NSWindow?
+    private weak var observedView: RainMetalView?
 
     private var wallpaperTexture: MTLTexture?
     private var wallpaperRevision = -1
@@ -47,6 +58,21 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         displayDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm_srgb
         displayPipeline = try? device.makeRenderPipelineState(descriptor: displayDescriptor)
 
+        let dropletDescriptor = MTLRenderPipelineDescriptor()
+        dropletDescriptor.vertexFunction = library?.makeFunction(name: "dropletVertex")
+        dropletDescriptor.fragmentFunction = library?.makeFunction(name: "dropletFragment")
+        dropletDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm_srgb
+        dropletDescriptor.colorAttachments[0].isBlendingEnabled = true
+        dropletDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        dropletDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        dropletDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
+        dropletDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        dropletPipeline = try? device.makeRenderPipelineState(descriptor: dropletDescriptor)
+        let bufferLength = 6_000 * MemoryLayout<DropletRenderInstance>.stride
+        instanceBuffers = (0..<3).compactMap { _ in
+            device.makeBuffer(length: bufferLength, options: .storageModeShared)
+        }
+
         let samplerDescriptor = MTLSamplerDescriptor()
         samplerDescriptor.minFilter = .linear
         samplerDescriptor.magFilter = .linear
@@ -55,6 +81,52 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         samplerDescriptor.tAddressMode = .clampToEdge
         sampler = device.makeSamplerState(descriptor: samplerDescriptor)
         super.init()
+    }
+
+    deinit {
+        if let observedWindow {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: observedWindow)
+        }
+    }
+
+    @MainActor
+    func setRainSeed(_ raw: String, in view: MTKView) {
+        guard rainSeed != raw else { return }
+        rainSeed = raw
+        simulation.reset(seed: UInt64(raw) ?? UInt64.random(in: UInt64.min...UInt64.max))
+        simulationAccumulator = 0
+        lastFrameTime = 0
+        view.needsDisplay = true
+    }
+
+    @MainActor
+    func observeWindow(of view: RainMetalView) {
+        guard observedWindow !== view.window || observedView !== view else { return }
+        if let observedWindow {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: observedWindow)
+        }
+        observedWindow = view.window
+        observedView = view
+        if let window = view.window {
+            NotificationCenter.default.addObserver(self, selector: #selector(windowOcclusionChanged(_:)), name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        }
+        updatePauseState()
+    }
+
+    @MainActor
+    @objc private func windowOcclusionChanged(_ notification: Notification) {
+        updatePauseState()
+    }
+
+    @MainActor
+    private func updatePauseState() {
+        guard let view = observedView else { return }
+        let visible = view.window?.occlusionState.contains(.visible) == true
+        view.isPaused = !visible
+        if visible {
+            lastFrameTime = 0
+            view.needsDisplay = true
+        }
     }
 
     func setDiagnosticsEnabled(_ enabled: Bool) {
@@ -79,11 +151,24 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         diagnostics.updateSize(width: Int(size.width), height: Int(size.height))
         backgroundDirty = true
+        simulation.resize(to: view.bounds.size)
         view.needsDisplay = true
     }
 
     func draw(in view: MTKView) {
         let start = CFAbsoluteTimeGetCurrent()
+        let frameElapsed = lastFrameTime == 0 ? 0 : min(0.1, start - lastFrameTime)
+        lastFrameTime = start
+        simulation.resize(to: view.bounds.size)
+        simulationAccumulator += Float(frameElapsed)
+        let fixedStep: Float = 1.0 / 120.0
+        var steps = 0
+        while simulationAccumulator >= fixedStep && steps < 4 {
+            simulation.step(dt: fixedStep)
+            simulationAccumulator -= fixedStep
+            steps += 1
+        }
+        if steps == 4 { simulationAccumulator = 0 }
         guard let commandQueue,
               let descriptor = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
@@ -104,6 +189,24 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             var viewport = SIMD2<Float>(Float(width), Float(height))
             encoder.setFragmentBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        }
+        if let dropletPipeline, !instanceBuffers.isEmpty {
+            simulation.renderInstances(into: &renderInstances)
+            let byteCount = renderInstances.count * MemoryLayout<DropletRenderInstance>.stride
+            if byteCount > 0 {
+                framesInFlight.wait()
+                let buffer = instanceBuffers[nextInstanceBuffer]
+                nextInstanceBuffer = (nextInstanceBuffer + 1) % instanceBuffers.count
+                renderInstances.withUnsafeBytes { source in
+                    buffer.contents().copyMemory(from: source.baseAddress!, byteCount: byteCount)
+                }
+                encoder.setRenderPipelineState(dropletPipeline)
+                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+                var viewportPoints = SIMD2<Float>(Float(view.bounds.width), Float(view.bounds.height))
+                encoder.setVertexBytes(&viewportPoints, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: renderInstances.count)
+                commandBuffer.addCompletedHandler { [framesInFlight] _ in framesInFlight.signal() }
+            }
         }
         encoder.endEncoding()
         commandBuffer.present(drawable)
