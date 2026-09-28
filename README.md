@@ -40,4 +40,6 @@ swiftc -parse-as-library Tests/AudioAssetsCheck.swift -o /tmp/AudioAssetsCheck
 /tmp/AudioAssetsCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app
 swiftc -parse-as-library RainGlass/App/AppSettings.swift RainGlass/Audio/AudioSettings.swift RainGlass/Audio/AmbientAudioEngine.swift Tests/AudioEngineCheck.swift -o /tmp/AudioEngineCheck
 /tmp/AudioEngineCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app
+swiftc RainGlass/App/AppSettings.swift RainGlass/Wallpaper/WallpaperController.swift Tests/WallpaperColorCheck.swift -o /tmp/WallpaperColorCheck
+/tmp/WallpaperColorCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app/Contents/Resources/default.metallib
 ```

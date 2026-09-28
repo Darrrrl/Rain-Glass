@@ -111,13 +111,15 @@ final class WallpaperController: ObservableObject {
     }
 }
 
-private enum WallpaperDecoder {
+enum WallpaperDecoder {
     enum DecodeError: LocalizedError {
         case invalidImage
+        case textureCreationFailed
 
         var errorDescription: String? {
             switch self {
             case .invalidImage: "The file is not a supported still image."
+            case .textureCreationFailed: "The wallpaper could not be uploaded to Metal."
             }
         }
     }
@@ -144,11 +146,51 @@ private enum WallpaperDecoder {
             throw DecodeError.invalidImage
         }
 
-        let loader = MTKTextureLoader(device: device)
-        return try loader.newTexture(cgImage: decoded, options: [
-            .SRGB: true,
-            .generateMipmaps: true,
-            .origin: MTKTextureLoader.Origin.topLeft
-        ])
+        let alignment = device.minimumLinearTextureAlignment(for: .rgba8Unorm_srgb)
+        let bytesPerRow = ((decoded.width * 4 + alignment - 1) / alignment) * alignment
+        let bounds = CGRect(x: 0, y: 0, width: decoded.width, height: decoded.height)
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                data: nil, width: decoded.width, height: decoded.height,
+                bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+              ),
+              let pixels = context.data else {
+            throw DecodeError.invalidImage
+        }
+        // ImageIO thumbnails may use skip-first ARGB bytes; upload a known sRGB RGBA layout.
+        context.setFillColor(CGColor(srgbRed: 0.045, green: 0.055, blue: 0.075, alpha: 1))
+        context.fill(bounds)
+        context.draw(decoded, in: bounds)
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm_srgb,
+            width: decoded.width, height: decoded.height, mipmapped: true
+        )
+        descriptor.usage = [.shaderRead]
+        descriptor.storageMode = .private
+        guard let texture = device.makeTexture(descriptor: descriptor),
+              let staging = device.makeBuffer(bytes: pixels, length: bytesPerRow * decoded.height, options: .storageModeShared),
+              let queue = device.makeCommandQueue(),
+              let commandBuffer = queue.makeCommandBuffer(),
+              let blit = commandBuffer.makeBlitCommandEncoder() else {
+            throw DecodeError.textureCreationFailed
+        }
+        blit.copy(
+            from: staging, sourceOffset: 0, sourceBytesPerRow: bytesPerRow,
+            sourceBytesPerImage: bytesPerRow * decoded.height,
+            sourceSize: MTLSize(width: decoded.width, height: decoded.height, depth: 1),
+            to: texture, destinationSlice: 0, destinationLevel: 0,
+            destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+        )
+        blit.generateMipmaps(for: texture)
+        blit.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+        guard commandBuffer.status == .completed else {
+            throw commandBuffer.error ?? DecodeError.textureCreationFailed
+        }
+        return texture
     }
 }
