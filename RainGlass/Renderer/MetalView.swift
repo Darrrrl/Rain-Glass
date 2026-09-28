@@ -9,10 +9,11 @@ struct MetalView: NSViewRepresentable {
     let wallpaperRevision: Int
     let scaleMode: WallpaperScaleMode
     let parameters: RainParameters
+    let flashState: LightningFlashState?
     let rainSeed: String
 
     func makeCoordinator() -> MetalRenderer {
-        MetalRenderer(device: device, diagnostics: diagnostics)
+        MetalRenderer(device: device, diagnostics: diagnostics, flashState: flashState)
     }
 
     func makeNSView(context: Context) -> RainMetalView {
@@ -32,6 +33,7 @@ struct MetalView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: RainMetalView, context: Context) {
+        context.coordinator.setFlashState(flashState)
         context.coordinator.setDiagnosticsEnabled(diagnosticsEnabled)
         context.coordinator.setRainSeed(rainSeed, in: view)
         context.coordinator.setSceneParameters(parameters, in: view)

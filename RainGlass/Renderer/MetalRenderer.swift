@@ -20,6 +20,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private let wetGlassPipeline: MTLRenderPipelineState?
     private let sampler: MTLSamplerState?
     private let diagnostics: RenderDiagnostics
+    private var flashState: LightningFlashState?
     private let simulation = RainSimulation(seed: UInt64.random(in: UInt64.min...UInt64.max))
     private var rainSeed = ""
     private var lastFrameTime: CFAbsoluteTime = 0
@@ -49,8 +50,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private var sampleFrames = 0
     private var sampleCPUSeconds = 0.0
 
-    init(device: MTLDevice, diagnostics: RenderDiagnostics) {
+    init(device: MTLDevice, diagnostics: RenderDiagnostics, flashState: LightningFlashState?) {
         self.device = device
+        self.flashState = flashState
         commandQueue = device.makeCommandQueue()
         self.diagnostics = diagnostics
 
@@ -186,6 +188,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     @MainActor
+    func setFlashState(_ state: LightningFlashState?) {
+        flashState = state
+    }
+
+    @MainActor
     func setSceneParameters(_ parameters: RainParameters, in view: MTKView) {
         simulation.setParameters(parameters)
         targetBlurRadius = parameters.blur
@@ -313,6 +320,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             encoder.setFragmentSamplerState(sampler, index: 0)
             var settings = SIMD4<Float>(Float(width), Float(height), refractionStrength, blurRadius > 0 ? 1 : 0)
             encoder.setFragmentBytes(&settings, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
+            var exposure = flashState?.exposure(at: ProcessInfo.processInfo.systemUptime) ?? 0
+            encoder.setFragmentBytes(&exposure, length: MemoryLayout<Float>.stride, index: 1)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         } else if let background = blurRadius > 0 ? blurredBackground : sharpBackground,
                   let displayPipeline, let sampler {
@@ -321,6 +330,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             encoder.setFragmentSamplerState(sampler, index: 0)
             var viewport = SIMD2<Float>(Float(width), Float(height))
             encoder.setFragmentBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 0)
+            var exposure = flashState?.exposure(at: ProcessInfo.processInfo.systemUptime) ?? 0
+            encoder.setFragmentBytes(&exposure, length: MemoryLayout<Float>.stride, index: 1)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         }
         if let dropBuffer, let trailBuffer, let dropletPipeline, let trailPipeline {

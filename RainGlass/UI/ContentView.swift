@@ -4,6 +4,8 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var wallpaper: WallpaperController
     @ObservedObject var rainSettings: RainSettingsStore
+    @ObservedObject var audio: AudioController
+    let flashState: LightningFlashState?
     @AppStorage(AppSettings.developerOverlayKey) private var developerOverlayEnabled = false
     @AppStorage(AppSettings.rainSeedKey) private var rainSeed = ""
     @StateObject private var diagnostics = RenderDiagnostics()
@@ -20,6 +22,7 @@ struct ContentView: View {
                         wallpaperRevision: wallpaper.revision,
                         scaleMode: wallpaper.scaleMode,
                         parameters: rainSettings.parameters,
+                        flashState: flashState,
                         rainSeed: rainSeed
                     )
                         .ignoresSafeArea()
@@ -50,6 +53,15 @@ struct ContentView: View {
 
                     if developerOverlayEnabled {
                         DeveloperOverlay(snapshot: diagnostics.snapshot)
+                            .padding(16)
+                    }
+
+                    if let error = audio.errorMessage {
+                        Text(error)
+                            .font(.caption)
+                            .padding(8)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                             .padding(16)
                     }
                 }

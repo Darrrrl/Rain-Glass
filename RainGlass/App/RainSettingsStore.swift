@@ -27,7 +27,8 @@ enum BuiltInRainPreset: String, CaseIterable, Identifiable {
                            wind: 0.12, blur: 2.8, refraction: 0.78, trailPersistence: 5.5)
         case .storm:
             RainParameters(intensity: 1, dropletSize: 1.35, dropCount: 6_000, gravity: 1.55,
-                           wind: 0.45, blur: 3.8, refraction: 0.9, trailPersistence: 7)
+                           wind: 0.45, blur: 3.8, refraction: 0.9, trailPersistence: 7,
+                           lightningEnabled: true, stormFrequency: 6)
         }
     }
 }
@@ -73,6 +74,9 @@ final class RainSettingsStore: ObservableObject {
             !presets.contains(where: { $0.selectionID == selectionID }) {
             selectionID = "custom"
         }
+        if let builtIn = BuiltInRainPreset(rawValue: selectionID) {
+            parameters = builtIn.parameters
+        }
     }
 
     private let defaults: UserDefaults
@@ -93,6 +97,13 @@ final class RainSettingsStore: ObservableObject {
     func edit(_ keyPath: WritableKeyPath<RainParameters, Double>, value: Double) {
         parameters[keyPath: keyPath] = value
         parameters = parameters.clamped()
+        selectionID = "custom"
+        errorMessage = nil
+        persist()
+    }
+
+    func editLightningEnabled(_ enabled: Bool) {
+        parameters.lightningEnabled = enabled
         selectionID = "custom"
         errorMessage = nil
         persist()

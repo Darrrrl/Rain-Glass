@@ -29,6 +29,24 @@ struct RainSettingsCheck {
         assert(second.selectionID == "custom")
         second.edit(\.dropCount, value: 100_000)
         assert(second.parameters.dropCount == 6_000)
+        second.select(BuiltInRainPreset.storm.id)
+        assert(second.parameters.lightningEnabled)
+        assert(second.parameters.stormFrequency == 6)
+        second.editLightningEnabled(false)
+        assert(second.selectionID == "custom")
+
+        var legacy = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(RainParameters.rain)) as! [String: Any]
+        legacy.removeValue(forKey: "lightningEnabled")
+        legacy.removeValue(forKey: "stormFrequency")
+        let migrated = try! JSONDecoder().decode(RainParameters.self, from: JSONSerialization.data(withJSONObject: legacy))
+        assert(!migrated.lightningEnabled && migrated.stormFrequency == 0)
+        var legacyStorm = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(BuiltInRainPreset.storm.parameters)) as! [String: Any]
+        legacyStorm.removeValue(forKey: "lightningEnabled")
+        legacyStorm.removeValue(forKey: "stormFrequency")
+        let snapshot: [String: Any] = ["selectionID": "storm", "parameters": legacyStorm, "presets": []]
+        defaults.set(try! JSONSerialization.data(withJSONObject: snapshot), forKey: AppSettings.rainSettingsKey)
+        let restoredStorm = RainSettingsStore(defaults: defaults)
+        assert(restoredStorm.parameters.lightningEnabled && restoredStorm.parameters.stormFrequency == 6)
         print("Rain settings migrated, saved, renamed, and deleted")
     }
 }

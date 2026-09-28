@@ -5,4 +5,5 @@ enum AppSettings {
     static let wallpaperBlurRadiusKey = "wallpaperBlurRadius"
     static let rainSeedKey = "rainSeed"
     static let rainSettingsKey = "rainSettings.v1"
+    static let audioSettingsKey = "audioSettings.v1"
 }

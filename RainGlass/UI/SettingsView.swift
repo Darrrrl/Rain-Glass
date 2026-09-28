@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var wallpaper: WallpaperController
     @ObservedObject var rainSettings: RainSettingsStore
+    @ObservedObject var audio: AudioController
+    let triggerLightning: (Double) -> Void
     @AppStorage(AppSettings.developerOverlayKey) private var developerOverlayEnabled = false
     @AppStorage(AppSettings.rainSeedKey) private var rainSeed = ""
     @State private var presetName = ""
@@ -54,6 +56,32 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Audio") {
+                Toggle("Mute", isOn: Binding(
+                    get: { audio.settings.muted },
+                    set: { audio.setMuted($0) }
+                ))
+                audioControl("Master volume", value: audio.settings.master, set: audio.setMaster)
+                ForEach(AmbientLayer.allCases) { layer in
+                    audioControl(layer.title, value: audio.settings.volume(for: layer)) {
+                        audio.setLayer(layer, volume: $0)
+                    }
+                }
+                audioControl("Thunder", value: audio.settings.thunder, set: audio.setThunder)
+                if let error = audio.errorMessage {
+                    Text(error).foregroundStyle(.red)
+                    Button("Retry Audio") { audio.retry() }
+                }
+            }
+
+            Section("Lightning") {
+                Toggle("Enable lightning", isOn: Binding(
+                    get: { rainSettings.parameters.lightningEnabled },
+                    set: { rainSettings.editLightningEnabled($0) }
+                ))
+                control("Storm frequency", \.stormFrequency, in: 0...30, format: "%.0f / hour")
+            }
+
             Section("Wallpaper") {
                 HStack {
                     Text(wallpaper.displayName ?? "No image selected")
@@ -80,6 +108,11 @@ struct SettingsView: View {
                 if !rainSeed.isEmpty && UInt64(rainSeed) == nil {
                     Text("Enter an unsigned integer seed.").foregroundStyle(.red)
                 }
+                HStack {
+                    Button("Strike at 1 km") { triggerLightning(1_000) }
+                    Button("Strike at 4 km") { triggerLightning(4_000) }
+                }
+                .disabled(!developerOverlayEnabled)
             }
         }
         .formStyle(.grouped)
@@ -110,6 +143,18 @@ struct SettingsView: View {
                 set: { rainSettings.edit(path, value: $0) }
             ), in: range)
             Text(String(format: format, rainSettings.parameters[keyPath: path]))
+                .monospacedDigit()
+                .frame(width: 62, alignment: .trailing)
+        }
+    }
+
+    private func audioControl(
+        _ title: String, value: Double, set: @escaping @MainActor @Sendable (Double) -> Void
+    ) -> some View {
+        HStack {
+            Text(title).frame(width: 125, alignment: .leading)
+            Slider(value: Binding(get: { value }, set: set), in: 0...1)
+            Text(String(format: "%.0f%%", value * 100))
                 .monospacedDigit()
                 .frame(width: 62, alignment: .trailing)
         }

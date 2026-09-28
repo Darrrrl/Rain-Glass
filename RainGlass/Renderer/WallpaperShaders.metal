@@ -42,9 +42,11 @@ fragment float4 displayBackgroundFragment(
     FullscreenVertex in [[stage_in]],
     texture2d<float> background [[texture(0)]],
     sampler imageSampler [[sampler(0)]],
-    constant float2& viewportSize [[buffer(0)]]
+    constant float2& viewportSize [[buffer(0)]],
+    constant float& exposureEV [[buffer(1)]]
 ) {
-    return background.sample(imageSampler, in.position.xy / viewportSize);
+    float4 color = background.sample(imageSampler, in.position.xy / viewportSize);
+    return float4(color.rgb * exp2(exposureEV), 1);
 }
 
 struct DropletInstance {
@@ -153,11 +155,12 @@ fragment float4 wetGlassFragment(
     texture2d<float> blurred [[texture(1)]],
     texture2d<float> water [[texture(2)]],
     sampler imageSampler [[sampler(0)]],
-    constant float4& settings [[buffer(0)]]
+    constant float4& settings [[buffer(0)]],
+    constant float& exposureEV [[buffer(1)]]
 ) {
     float2 uv = in.position.xy / settings.xy;
     if (settings.z <= 0.0) {
-        return float4(blurred.sample(imageSampler, uv).rgb, 1);
+        return float4(blurred.sample(imageSampler, uv).rgb * exp2(exposureEV), 1);
     }
     float2 pixel = 1.0 / float2(water.get_width(), water.get_height());
     float height = water.sample(imageSampler, uv).r;
@@ -173,5 +176,5 @@ fragment float4 wetGlassFragment(
     float edge = saturate(length(slope) * 0.35);
     color *= 1 - edge * 0.09;
     color += float3(0.012) * edge;
-    return float4(color, 1);
+    return float4(color * exp2(exposureEV), 1);
 }
