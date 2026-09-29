@@ -4,14 +4,16 @@ import Foundation
 final class LightningCoordinator: NSObject {
     let flashState = LightningFlashState()
     private let rainSettings: RainSettingsStore
+    private let weather: WeatherController
     private let audio: AudioController
     private var timer: Timer?
     private var nextStrikeAt = Double.infinity
     private var scheduledFrequency = 0.0
     private var pendingThunder: [LightningEvent] = []
 
-    init(rainSettings: RainSettingsStore, audio: AudioController) {
+    init(rainSettings: RainSettingsStore, weather: WeatherController, audio: AudioController) {
         self.rainSettings = rainSettings
+        self.weather = weather
         self.audio = audio
         super.init()
     }
@@ -27,7 +29,7 @@ final class LightningCoordinator: NSObject {
 
     @objc private func tick(_ timer: Timer) {
         let now = ProcessInfo.processInfo.systemUptime
-        let parameters = rainSettings.parameters
+        let parameters = weather.effectiveParameters(base: rainSettings.parameters)
         let frequency = parameters.lightningEnabled ? parameters.stormFrequency : 0
         if frequency != scheduledFrequency {
             scheduledFrequency = frequency

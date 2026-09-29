@@ -9,6 +9,7 @@ private struct WallpaperUniforms {
     var viewportSize: SIMD2<Float>
     var imageSize: SIMD2<Float>
     var scaleMode: UInt32
+    var zoom: Float
 }
 
 @main
@@ -59,7 +60,7 @@ struct WallpaperColorCheck {
             encoder.setFragmentTexture(source, index: 0)
             encoder.setFragmentSamplerState(sampler, index: 0)
             var uniforms = WallpaperUniforms(
-                viewportSize: SIMD2(32, 32), imageSize: SIMD2(32, 32), scaleMode: 2
+                viewportSize: SIMD2(32, 32), imageSize: SIMD2(32, 32), scaleMode: 2, zoom: 1
             )
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<WallpaperUniforms>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
@@ -86,11 +87,15 @@ struct WallpaperColorCheck {
                 final.setFragmentTexture(sharp, index: 0)
                 final.setFragmentTexture(enabled ? blurred : sharp, index: 1)
                 final.setFragmentTexture(water, index: 2)
+                final.setFragmentTexture(water, index: 3)
+                final.setFragmentTexture(blurred, index: 4)
                 final.setFragmentSamplerState(sampler, index: 0)
                 var settings = SIMD4<Float>(32, 32, 0.65, enabled ? 1 : 0)
                 var exposure: Float = 0
+                var glass = SIMD4<Float>(repeating: 0)
                 final.setFragmentBytes(&settings, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
                 final.setFragmentBytes(&exposure, length: MemoryLayout<Float>.stride, index: 1)
+                final.setFragmentBytes(&glass, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
                 final.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                 final.endEncoding()
                 let finalBytes = readPixel(output, command, device)

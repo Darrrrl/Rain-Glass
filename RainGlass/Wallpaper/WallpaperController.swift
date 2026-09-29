@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import ImageIO
 import MetalKit
+import OSLog
 import UniformTypeIdentifiers
 
 enum WallpaperScaleMode: String, CaseIterable, Identifiable {
@@ -22,23 +23,33 @@ enum WallpaperScaleMode: String, CaseIterable, Identifiable {
 
 @MainActor
 final class WallpaperController: ObservableObject {
+    private let log = Logger(subsystem: "dev.rainglass.app", category: "wallpaper")
+    private let defaults: UserDefaults
     let device: MTLDevice? = MTLCreateSystemDefaultDevice()
 
     @Published private(set) var texture: MTLTexture?
     @Published private(set) var displayName: String?
+    @Published private(set) var currentURL: URL?
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var revision = 0
+    @Published private(set) var initialRestoreComplete = false
 
     @Published var scaleMode: WallpaperScaleMode {
-        didSet { UserDefaults.standard.set(scaleMode.rawValue, forKey: AppSettings.wallpaperScaleModeKey) }
+        didSet { defaults.set(scaleMode.rawValue, forKey: AppSettings.wallpaperScaleModeKey) }
+    }
+    @Published var zoom: Double {
+        didSet { defaults.set(zoom, forKey: AppSettings.wallpaperZoomKey) }
     }
 
     private var loadID = 0
 
-    init() {
-        let storedMode = UserDefaults.standard.string(forKey: AppSettings.wallpaperScaleModeKey)
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let storedMode = defaults.string(forKey: AppSettings.wallpaperScaleModeKey)
         scaleMode = WallpaperScaleMode(rawValue: storedMode ?? "") ?? .fill
+        let storedZoom = defaults.object(forKey: AppSettings.wallpaperZoomKey) as? Double ?? 1
+        zoom = storedZoom.isFinite ? min(3, max(1, storedZoom)) : 1
         Task { restoreWallpaper() }
     }
 
@@ -59,13 +70,18 @@ final class WallpaperController: ObservableObject {
     }
 
     private func restoreWallpaper() {
-        guard let bookmark = UserDefaults.standard.data(forKey: AppSettings.wallpaperBookmarkKey) else { return }
+        guard let bookmark = defaults.data(forKey: AppSettings.wallpaperBookmarkKey) else {
+            initialRestoreComplete = true
+            return
+        }
         do {
             var stale = false
             let url = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
             loadWallpaper(at: url, remember: stale)
         } catch {
+            log.error("Wallpaper bookmark restore failed: \(error.localizedDescription, privacy: .public)")
             errorMessage = "The saved wallpaper could not be found. Choose it again."
+            initialRestoreComplete = true
         }
     }
 
@@ -94,19 +110,23 @@ final class WallpaperController: ObservableObject {
 
     private func finishLoad(id: Int, url: URL, texture: MTLTexture, bookmark: Data?) {
         guard id == loadID else { return }
+        currentURL = url
         self.texture = texture
         displayName = url.lastPathComponent
         revision += 1
         isLoading = false
         errorMessage = nil
+        initialRestoreComplete = true
         if let bookmark {
-            UserDefaults.standard.set(bookmark, forKey: AppSettings.wallpaperBookmarkKey)
+            defaults.set(bookmark, forKey: AppSettings.wallpaperBookmarkKey)
         }
     }
 
     private func failLoad(id: Int, error: Error) {
         guard id == loadID else { return }
+        log.error("Wallpaper load failed: \(error.localizedDescription, privacy: .public)")
         isLoading = false
+        initialRestoreComplete = true
         errorMessage = "Could not open the image: \(error.localizedDescription)"
     }
 }

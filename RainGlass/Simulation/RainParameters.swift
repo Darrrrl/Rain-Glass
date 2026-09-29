@@ -24,7 +24,7 @@ struct RainParameters: Codable, Equatable {
             dropCount: dropCount.clamped(to: 0...6_000),
             gravity: gravity.clamped(to: 0...2),
             wind: wind.clamped(to: -1...1),
-            blur: blur.clamped(to: 0...8),
+            blur: blur.clamped(to: 0...64),
             refraction: refraction.clamped(to: 0...1),
             trailPersistence: trailPersistence.clamped(to: 0.5...15)
         )

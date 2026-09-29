@@ -8,9 +8,14 @@ struct MetalView: NSViewRepresentable {
     let wallpaperTexture: MTLTexture?
     let wallpaperRevision: Int
     let scaleMode: WallpaperScaleMode
+    let zoom: Double
     let parameters: RainParameters
     let flashState: LightningFlashState?
     let rainSeed: String
+    let quality: RenderQuality
+    let atmosphere: AtmosphereSettings
+    let manuallyPaused: Bool
+    var onArrivals: (@MainActor @Sendable ([(id: UInt64, radius: Float, x: Float)], UUID) -> Void)? = nil
 
     func makeCoordinator() -> MetalRenderer {
         MetalRenderer(device: device, diagnostics: diagnostics, flashState: flashState)
@@ -26,7 +31,7 @@ struct MetalView: NSViewRepresentable {
         view.clearColor = MTLClearColor(red: 0.045, green: 0.055, blue: 0.075, alpha: 1)
         view.framebufferOnly = true
         view.enableSetNeedsDisplay = false
-        view.preferredFramesPerSecond = 60
+        view.preferredFramesPerSecond = quality.targetFPS
         view.isPaused = true
         view.needsDisplay = true
         return view
@@ -34,16 +39,21 @@ struct MetalView: NSViewRepresentable {
 
     func updateNSView(_ view: RainMetalView, context: Context) {
         context.coordinator.setFlashState(flashState)
+        context.coordinator.setArrivalHandler(handler: onArrivals)
         context.coordinator.setDiagnosticsEnabled(diagnosticsEnabled)
         context.coordinator.setRainSeed(rainSeed, in: view)
         context.coordinator.setSceneParameters(parameters, in: view)
+        context.coordinator.setQuality(quality, in: view)
+        context.coordinator.setAtmosphere(atmosphere, in: view)
         context.coordinator.setWallpaper(
             texture: wallpaperTexture,
             revision: wallpaperRevision,
             scaleMode: scaleMode,
+            zoom: zoom,
             in: view
         )
         context.coordinator.observeWindow(of: view)
+        context.coordinator.setManuallyPaused(manuallyPaused)
     }
 }
 

@@ -7,6 +7,8 @@ struct DeveloperOverlay: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("FPS  \(snapshot.framesPerSecond, specifier: "%.0f")")
             Text("CPU frame  \(snapshot.cpuFrameMilliseconds, specifier: "%.2f") ms")
+            Text("GPU frame  \(snapshot.gpuFrameMilliseconds, specifier: "%.2f") ms")
+            Text("Render textures  \(snapshot.renderTextureMegabytes, specifier: "%.0f") MB")
             Text("Drawable  \(snapshot.drawableWidth) × \(snapshot.drawableHeight) px")
         }
         .font(.system(size: 12, weight: .medium, design: .monospaced))

@@ -4,15 +4,23 @@ RainGlass is a native macOS app built with SwiftUI and MetalKit. It renders a ch
 
 ## Run
 
-Open `RainGlass.xcodeproj` in Xcode 27 and run the shared **RainGlass** scheme on macOS 15 or newer. The project uses `dev.rainglass.app` as its development bundle identifier and does not require a signing team for local builds.
+Open `RainGlass.xcodeproj` in Xcode 27 and run the shared **RainGlass** scheme on macOS 15 or newer. The project uses `dev.rainglass.app` as its development bundle identifier. Debug builds receive a local ad hoc signature after compilation. For distribution, sign the app and screen saver with your developer identity and the configured entitlements.
 
-Choose an image in the main window or in **RainGlass > Settings**. Settings offers Fill, Fit, and Stretch placement, rain modes, live scene controls, and named custom presets. RainGlass remembers a bookmark to the original image; if the file becomes unavailable, choose it again.
+On first launch, choose a wallpaper in the small setup window. RainGlass then runs behind desktop icons on each display, without a normal app window or Dock icon. Click its menu bar icon for a compact controls panel with preset, pause, mute, volume, focus, wallpaper, and the Scene, Image, Sound, and App sections. Focus on drops softens the wallpaper while the drops continue to sample the sharp image. Closing the panel keeps the desktop rain and audio running. If the saved image becomes unavailable, the setup window helps choose another one. Start at Login uses the installed app's system registration and displays its actual status.
 
-The developer overlay shows FPS, CPU time spent encoding and submitting each frame, and drawable pixel dimensions. The rain scene targets 60 FPS while its window is visible and pauses when the window is hidden. In Developer settings, enter an unsigned integer rain seed to reproduce the same initial droplet layout and motion, or trigger near and distant strikes to check thunder timing.
+Scene presets include Cozy Window, Light Drizzle, Autumn Storm, Night Rain, and Sleep. They change rain, lightning, atmosphere, and audio levels while preserving the wallpaper and quality mode. Save a custom scene and import or export it as versioned JSON. Existing saved rain-only presets remain available under Legacy rain preset in Scene settings.
 
-Drizzle, Rain, Heavy Rain, and Storm are built-in starting points. Moving any slider switches to Custom without resetting existing drops. Use Save As to create a named preset; select one to rename or delete it. Scene settings and saved presets stay on this Mac.
+The developer overlay shows FPS, CPU and GPU frame times, estimated render texture memory, and drawable pixel dimensions on the desktop. Eco targets 30 FPS, Balanced 60 FPS, and Ultra up to 120 FPS when the display supports it. Developer controls are collapsed under Diagnostics in App settings.
 
-The app starts a quiet four-layer ambient mix on launch. Audio continues when the window is hidden; use the master mute or individual volume sliders in Settings. Storm enables lightning by default, with a frequency control in Custom. Each strike changes scene exposure and plays near or distant thunder after a distance-based delay. Bundled recording sources and licenses are listed in [Audio/SOURCES.md](RainGlass/Resources/Audio/SOURCES.md).
+Drizzle, Rain, Heavy Rain, and Storm are built-in starting points. Moving any slider switches to Custom without resetting existing drops. Save a named preset in Scene controls; select one to export or delete it. Scene settings and saved presets stay on this Mac.
+
+The app starts a quiet four-layer ambient mix on launch. Occasional larger drop arrivals can make softly synthesized glass taps; their separate volume defaults to 20%. Audio continues when the window is hidden; use the master mute or individual volume sliders in Settings. Storm enables lightning by default, with a frequency control in Custom. Each strike changes scene exposure and plays near or distant thunder after a distance-based delay. Bundled recording sources and licenses are listed in [Audio/SOURCES.md](RainGlass/Resources/Audio/SOURCES.md).
+
+Real Weather is optional. Search for a city in Settings, select it, and enable live weather to drive rain, wind, cloud blur, and lightning. Current conditions are refreshed every 15 minutes from [Open-Meteo](https://open-meteo.com/); the last successful reading is cached for outages. Turn Real Weather off to return to the saved manual scene. The free Open-Meteo service is for noncommercial use; commercial distribution requires an appropriate provider plan. The Glass atmosphere section adds optional condensation, haze, and subtle imperfections. All three default to off.
+
+## Screen saver
+
+The RainGlass build embeds `RainGlass.saver`. Choose **Install Screen Saver…** in the menu bar panel and accept the macOS installation prompt. Installing or replacing the bundle does not select it: open **System Settings → Wallpaper → Screen Saver → Other** and choose RainGlass. The screen saver mirrors the current wallpaper and visual settings in a fresh simulation. The app stores a copy of the wallpaper and settings in its App Group container when available, otherwise in Application Support, and can also transfer them directly to the separately hosted screen saver. Keep RainGlass running for that direct transfer. The screen saver has no audio engine; while it runs, the menu bar app temporarily silences audio and pauses its desktop renderers without changing saved mute or volume settings. macOS controls when the chosen saver appears on the Lock Screen.
 
 ## Boundaries
 
@@ -21,9 +29,12 @@ The app starts a quiet four-layer ambient mix on launch. Audio continues when th
 - **Wallpaper** owns user image selection, bookmarks, decoding, and texture upload.
 - **Simulation** owns seeded droplet state and fixed-step movement; the renderer uploads its visual instances in one batched draw.
 - **UI** owns the window content, settings controls, and diagnostic overlay.
-- **Audio** owns playback, layer crossfades, and persistent volume settings; **Simulation** coordinates lightning timing. Future **Weather** will feed scene parameters through explicit data.
+- **Audio** owns playback, layer crossfades, and persistent volume settings; **Simulation** coordinates lightning timing.
+- **Weather** owns city selection, cached current conditions, and the mapping into effective scene parameters.
 
-Drops merge when they touch, sliding drops collect smaller ones, and their trails fade. A half resolution water surface bends the cached wallpaper behind drops and trails, with subtle highlights over the lens effect. Weather integration comes later.
+Drops merge when they touch, sliding drops collect smaller ones, and their water traces fade. A quality-scaled water surface bends the cached wallpaper behind drops and trails. Condensation persists in a low resolution texture: moving drops wipe clear paths through it, and fog slowly returns. Fog softness and return time have separate controls.
+Moving drops respond to a seeded adhesion pattern fixed to the glass, so they creep, pause, or slide at different speeds and curve smoothly with the surface and wind. Merges retain the surviving drop's center. Startup begins with scattered small beads, then fills over two seconds; replacements wait briefly and fade in without moving their centers. Larger drops sag and narrow toward their upper attachment; nearby stationary pairs can share a thin water bridge. Optional two, four, and six pane frames sit in front of the rain without changing the simulation.
+The wallpaper can be zoomed from 1× to 3× in fill, fit, or stretch mode. The background blur control reaches 64 px; fog remains softer than the chosen wallpaper blur. Water traces retain their width as they fade, keeping adjoining sections connected.
 
 ## Checks
 
@@ -32,8 +43,24 @@ Run the shared Xcode scheme in Debug or Release. From the repository root, run t
 ```sh
 swiftc RainGlass/Simulation/RainParameters.swift RainGlass/App/AppSettings.swift RainGlass/App/RainSettingsStore.swift RainGlass/Simulation/RainSimulation.swift Tests/RainSimulationCheck.swift -o /tmp/RainSimulationCheck
 /tmp/RainSimulationCheck
+swiftc -O -assert-config Debug RainGlass/Simulation/RainParameters.swift RainGlass/Simulation/RainSimulation.swift Tests/RainWaterPolishCheck.swift -o /tmp/RainWaterPolishCheck
+/tmp/RainWaterPolishCheck
+swiftc -parse-as-library Tests/TrailJunctionCheck.swift -o /tmp/TrailJunctionCheck
+/tmp/TrailJunctionCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app/Contents/Resources/default.metallib
+swiftc RainGlass/Simulation/RainParameters.swift RainGlass/App/VisualSettings.swift RainGlass/App/ScreenSaverScene.swift Tests/ScreenSaverSceneCheck.swift -o /tmp/ScreenSaverSceneCheck
+/tmp/ScreenSaverSceneCheck
+swiftc RainGlass/Simulation/RainParameters.swift RainGlass/App/VisualSettings.swift RainGlass/App/ScreenSaverScene.swift Tests/ScreenSaverTransferCheck.swift -o /tmp/ScreenSaverTransferCheck
+/tmp/ScreenSaverTransferCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app/Contents/Resources/RainGlass.saver RainGlass/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png
+swiftc -O -assert-config Debug RainGlass/Simulation/RainParameters.swift RainGlass/Simulation/RainSimulation.swift Tests/RainArrivalCheck.swift -o /tmp/RainArrivalCheck
+/tmp/RainArrivalCheck
+swiftc -parse-as-library Tests/FogHistoryCheck.swift -o /tmp/FogHistoryCheck
+/tmp/FogHistoryCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app/Contents/Resources/default.metallib
 swiftc RainGlass/Simulation/RainParameters.swift RainGlass/App/AppSettings.swift RainGlass/App/RainSettingsStore.swift Tests/RainSettingsCheck.swift -o /tmp/RainSettingsCheck
 /tmp/RainSettingsCheck
+swiftc RainGlass/App/AppSettings.swift RainGlass/App/VisualSettings.swift RainGlass/Simulation/RainParameters.swift RainGlass/App/RainSettingsStore.swift RainGlass/Audio/AudioSettings.swift RainGlass/Audio/AmbientAudioEngine.swift RainGlass/App/ScenePresetStore.swift Tests/ScenePresetCheck.swift -o /tmp/ScenePresetCheck
+/tmp/ScenePresetCheck
+swiftc RainGlass/App/AppSettings.swift RainGlass/App/DesktopWindowManager.swift Tests/DesktopModeCheck.swift -o /tmp/DesktopModeCheck
+/tmp/DesktopModeCheck
 swiftc RainGlass/Simulation/LightningTiming.swift Tests/LightningTimingCheck.swift -o /tmp/LightningTimingCheck
 /tmp/LightningTimingCheck
 swiftc -parse-as-library Tests/AudioAssetsCheck.swift -o /tmp/AudioAssetsCheck
@@ -42,4 +69,16 @@ swiftc -parse-as-library RainGlass/App/AppSettings.swift RainGlass/Audio/AudioSe
 /tmp/AudioEngineCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app
 swiftc RainGlass/App/AppSettings.swift RainGlass/Wallpaper/WallpaperController.swift Tests/WallpaperColorCheck.swift -o /tmp/WallpaperColorCheck
 /tmp/WallpaperColorCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app/Contents/Resources/default.metallib
+swiftc RainGlass/App/AppSettings.swift RainGlass/Wallpaper/WallpaperController.swift Tests/WallpaperSetupCheck.swift -o /tmp/WallpaperSetupCheck
+/tmp/WallpaperSetupCheck
+swiftc -parse-as-library Tests/WallpaperZoomCheck.swift -o /tmp/WallpaperZoomCheck
+/tmp/WallpaperZoomCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app/Contents/Resources/default.metallib
+swiftc RainGlass/App/AppSettings.swift RainGlass/Simulation/RainParameters.swift RainGlass/Weather/WeatherProvider.swift RainGlass/Weather/WeatherController.swift Tests/WeatherCheck.swift -o /tmp/WeatherCheck
+/tmp/WeatherCheck
 ```
+
+## Desktop acceptance checks
+
+The desktop level uses public Quartz levels, but its behavior needs verification on each supported macOS release in an installed build. Check that Finder icon clicks work, then switch Spaces, use Mission Control and Stage Manager, open a full-screen app, connect and disconnect displays with mixed scales, and sleep and wake. Confirm that a disconnected display's renderer and textures are released and that the menu bar shows a recoverable error if desktop presentation fails. The 30 minute performance test is intentionally skipped.
+
+A local `swiftc` strict concurrency typecheck and focused scene preset and legacy preset checks can run without the Metal compiler. A complete Xcode build requires Xcode's Metal Toolchain component.

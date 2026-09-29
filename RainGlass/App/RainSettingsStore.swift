@@ -94,6 +94,13 @@ final class RainSettingsStore: ObservableObject {
         persist()
     }
 
+    func applyPreset(_ value: RainParameters) {
+        parameters = value.clamped()
+        selectionID = "custom"
+        errorMessage = nil
+        persist()
+    }
+
     func edit(_ keyPath: WritableKeyPath<RainParameters, Double>, value: Double) {
         parameters[keyPath: keyPath] = value
         parameters = parameters.clamped()

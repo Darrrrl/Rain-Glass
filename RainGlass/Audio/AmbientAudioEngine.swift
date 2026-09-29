@@ -20,6 +20,10 @@ final class AmbientAudioEngine: NSObject {
     private let bundle: Bundle
     private let layers = AmbientLayer.allCases.map(LayerState.init)
     private let thunderNodes = [AVAudioPlayerNode(), AVAudioPlayerNode()]
+    private let tapNodes = (0..<4).map { _ in AVAudioPlayerNode() }
+    private var tapBuffers: [AVAudioPCMBuffer] = []
+    private var nextTapNode = 0
+    private var tapRandomState = UInt64.random(in: UInt64.min...UInt64.max)
     private var nearThunder: AVAudioFile?
     private var farThunder: AVAudioFile?
     private var nextThunderNode = 0
@@ -57,6 +61,11 @@ final class AmbientAudioEngine: NSObject {
                 engine.attach(node)
                 engine.connect(node, to: engine.mainMixerNode, format: nil)
             }
+            tapBuffers = (0..<6).map(Self.makeTapBuffer)
+            for node in tapNodes {
+                engine.attach(node)
+                engine.connect(node, to: engine.mainMixerNode, format: nil)
+            }
             graphPrepared = true
             NotificationCenter.default.addObserver(
                 self, selector: #selector(configurationChanged(_:)),
@@ -72,6 +81,52 @@ final class AmbientAudioEngine: NSObject {
 
     func apply(_ settings: AudioSettings) {
         self.settings = settings
+        if settings.muted || settings.glassTaps == 0 { tapNodes.forEach { $0.volume = 0 } }
+    }
+
+    func playGlassTap(id: UInt64, radius: Float, x: Float) {
+        guard ready, engine.isRunning, !settings.muted, settings.glassTaps > 0,
+              !tapBuffers.isEmpty else { return }
+        let node = tapNodes[nextTapNode]
+        nextTapNode = (nextTapNode + 1) % tapNodes.count
+        node.stop()
+        let soundRandom = nextTapRandom() ^ (id &* 0x9E3779B97F4A7C15)
+        node.scheduleBuffer(tapBuffers[Int(soundRandom % UInt64(tapBuffers.count))], at: nil)
+        node.pan = max(-0.45, min(0.45, (x * 2 - 1) * 0.45))
+        let variation = Float(0.75 + Double((soundRandom >> 8) % 23) / 100)
+        node.volume = Float(settings.master * settings.glassTaps) *
+            min(1, max(0.55, radius / 8)) * variation
+        node.play()
+    }
+
+    private func nextTapRandom() -> UInt64 {
+        tapRandomState &+= 0x9E3779B97F4A7C15
+        var value = tapRandomState
+        value = (value ^ (value >> 30)) &* 0xBF58476D1CE4E5B9
+        value = (value ^ (value >> 27)) &* 0x94D049BB133111EB
+        return value ^ (value >> 31)
+    }
+
+    private static func makeTapBuffer(_ variant: Int) -> AVAudioPCMBuffer {
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
+        let duration = 0.065 + Double(variant) * 0.014
+        let frames = AVAudioFrameCount(duration * format.sampleRate)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)!
+        buffer.frameLength = frames
+        var noise = UInt32(0x9E37 &+ variant * 997)
+        for frame in 0..<Int(frames) {
+            let time = Double(frame) / format.sampleRate
+            noise = noise &* 1_664_525 &+ 1_013_904_223
+            let hiss = Double(noise >> 16) / 32_768 - 1
+            let attack = 1 - exp(-time / 0.002)
+            let decay = exp(-time * (36 + Double(variant) * 3))
+            let tone = sin(2 * .pi * (850 + Double(variant) * 85) * time) * 0.7 +
+                sin(2 * .pi * (1_500 + Double(variant) * 62) * time) * 0.25
+            let sample = Float(0.13 * attack * decay * (tone + hiss * exp(-time * 100) * 0.25))
+            buffer.floatChannelData![0][frame] = sample
+            buffer.floatChannelData![1][frame] = sample
+        }
+        return buffer
     }
 
     func retry() {
@@ -159,6 +214,7 @@ final class AmbientAudioEngine: NSObject {
         guard ready else { return }
         for layer in layers { layer.nodes.forEach { $0.stop() } }
         thunderNodes.forEach { $0.stop() }
+        tapNodes.forEach { $0.stop() }
         if engine.isRunning { engine.stop() }
         do {
             try engine.start()
