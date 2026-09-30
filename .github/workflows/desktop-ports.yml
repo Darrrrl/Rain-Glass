@@ -1,0 +1,53 @@
+name: Desktop ports
+on:
+  push:
+    paths: ["ports/**", ".github/workflows/desktop-ports.yml"]
+  pull_request:
+    paths: ["ports/**", ".github/workflows/desktop-ports.yml"]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ports
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --release --workspace
+      - run: cargo build --locked --release -p rainglass-desktop
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $compiler)) { choco install innosetup --no-progress -y }
+          & $compiler windows/RainGlass.iss
+      - name: Package binary
+        shell: pwsh
+        run: Compress-Archive -Path target/release/rainglass-desktop.exe -DestinationPath RainGlass-Windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RainGlass-Windows
+          path: |
+            ports/RainGlass-Windows.zip
+            ports/windows/dist/*.exe
+
+  linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ports
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Native dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libasound2-dev libwayland-dev libxkbcommon-dev
+      - run: cargo test --locked --release --workspace
+      - run: cargo build --locked --release -p rainglass-desktop
+      - run: node --check gnome-extension/rainglass@dev.rainglass.app/extension.js
+      - name: Package binary and extension
+        run: tar -czf RainGlass-GNOME.tar.gz -C "$PWD/target/release" rainglass-desktop -C "$PWD" gnome-extension install-gnome.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RainGlass-GNOME
+          path: ports/RainGlass-GNOME.tar.gz

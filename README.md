@@ -1,5 +1,7 @@
 # RainGlass
 
+Windows 11 and GNOME Wayland port work lives in [ports/README.md](ports/README.md).
+
 RainGlass is a native macOS app built with SwiftUI and MetalKit. It renders a chosen image behind a procedural rain scene.
 
 ## Run

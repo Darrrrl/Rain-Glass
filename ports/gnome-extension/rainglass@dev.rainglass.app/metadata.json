@@ -1,0 +1,7 @@
+{
+  "uuid": "rainglass@dev.rainglass.app",
+  "name": "RainGlass",
+  "description": "Procedural rain on the GNOME Wayland desktop",
+  "shell-version": ["46", "47", "48", "49", "50"],
+  "session-modes": ["user"]
+}
