@@ -178,7 +178,10 @@ private struct RainGlassMenuPanel: View {
 
             HStack {
                 Text("Volume").font(.caption)
-                Slider(value: Binding(get: { audio.settings.master }, set: { audio.setMaster($0) }), in: 0...1)
+                Slider(value: Binding(get: { audio.settings.master }, set: {
+                    audio.setMaster($0)
+                    scenePresets.markCustom()
+                }), in: 0...1)
                 Text(String(format: "%.0f%%", audio.settings.master * 100))
                     .font(.caption.monospacedDigit()).frame(width: 40, alignment: .trailing)
             }

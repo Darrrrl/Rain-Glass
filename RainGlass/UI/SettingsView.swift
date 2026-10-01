@@ -205,6 +205,11 @@ struct SettingsView: View {
                     Toggle("Use live weather", isOn: Binding(get: { weather.enabled }, set: { weather.setEnabled($0) }))
                     HStack {
                         TextField("City or postal code", text: $cityQuery)
+                            .onChange(of: cityQuery) { _, query in
+                                if query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 {
+                                    weather.clearSearch()
+                                }
+                            }
                         Button("Search") { Task { await weather.search(cityQuery) } }
                     }
                     if weather.isSearching { ProgressView() }

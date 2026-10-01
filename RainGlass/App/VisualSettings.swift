@@ -19,6 +19,9 @@ enum RenderQuality: String, CaseIterable, Identifiable {
         case .ultra: 1
         }
     }
+    func framesPerSecond(displayMaximum: Int?) -> Int {
+        min(targetFPS, displayMaximum.flatMap { $0 > 0 ? $0 : nil } ?? targetFPS)
+    }
     var atmosphereScale: Int { self == .ultra ? 3 : 4 }
     var blurScale: Int { self == .ultra ? 1 : 2 }
 }

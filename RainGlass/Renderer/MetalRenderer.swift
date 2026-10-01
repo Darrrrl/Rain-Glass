@@ -183,9 +183,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     deinit {
-        if let observedWindow {
-            NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: observedWindow)
-        }
+        NotificationCenter.default.removeObserver(self)
     }
 
     @MainActor
@@ -207,13 +205,30 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         guard observedWindow !== view.window || observedView !== view else { return }
         if let observedWindow {
             NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: observedWindow)
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeScreenNotification, object: observedWindow)
         }
+        NotificationCenter.default.removeObserver(self, name: NSApplication.didChangeScreenParametersNotification, object: nil)
         observedWindow = view.window
         observedView = view
         if let window = view.window {
             NotificationCenter.default.addObserver(self, selector: #selector(windowOcclusionChanged(_:)), name: NSWindow.didChangeOcclusionStateNotification, object: window)
+            NotificationCenter.default.addObserver(self, selector: #selector(displayChanged(_:)), name: NSWindow.didChangeScreenNotification, object: window)
         }
+        NotificationCenter.default.addObserver(self, selector: #selector(displayChanged(_:)), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        updateFrameRate(in: view, quality: quality)
         updatePauseState()
+    }
+
+    @MainActor
+    @objc private func displayChanged(_ notification: Notification) {
+        guard let view = observedView else { return }
+        updateFrameRate(in: view, quality: quality)
+    }
+
+    @MainActor
+    private func updateFrameRate(in view: MTKView, quality: RenderQuality) {
+        let fps = quality.framesPerSecond(displayMaximum: view.window?.screen?.maximumFramesPerSecond)
+        if view.preferredFramesPerSecond != fps { view.preferredFramesPerSecond = fps }
     }
 
     @MainActor
@@ -269,9 +284,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     @MainActor
     func setQuality(_ value: RenderQuality, in view: MTKView) {
+        updateFrameRate(in: view, quality: value)
         guard quality != value else { return }
         quality = value
-        view.preferredFramesPerSecond = min(value.targetFPS, view.window?.screen?.maximumFramesPerSecond ?? value.targetFPS)
         waterHeight = nil
         fogNext = nil
         fogWipe = nil
