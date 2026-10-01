@@ -14,6 +14,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build and test WPF controls
+        shell: pwsh
+        run: |
+          dotnet build windows/RainGlass.Controls/RainGlass.Controls.csproj -c Release
+          $test = Start-Process windows/RainGlass.Controls/bin/Release/net10.0-windows/RainGlass.Controls.exe -ArgumentList '--self-test' -Wait -PassThru -WindowStyle Hidden
+          if ($test.ExitCode -ne 0) { throw 'WPF controls tests failed' }
+          dotnet publish windows/RainGlass.Controls/RainGlass.Controls.csproj -c Release -r win-x64 --self-contained true -o target/release/ui
       - run: cargo test --locked --release --workspace
       - run: cargo build --locked --release -p rainglass-desktop
       - name: Build Windows installer
@@ -24,7 +34,7 @@ jobs:
           & $compiler windows/RainGlass.iss
       - name: Package binary
         shell: pwsh
-        run: Compress-Archive -Path target/release/rainglass-desktop.exe -DestinationPath RainGlass-Windows.zip
+        run: Compress-Archive -Path target/release/rainglass-desktop.exe,target/release/ui -DestinationPath RainGlass-Windows.zip
       - uses: actions/upload-artifact@v4
         with:
           name: RainGlass-Windows

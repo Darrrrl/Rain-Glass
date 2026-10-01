@@ -495,7 +495,7 @@ impl Simulation {
             let cy = (p.y / 32.0).floor() as i32;
             let reach =
                 ((1.6 * (self.drops[i].radius + maximum_radius) / 32.0).ceil() as i32).max(1);
-            for y in cy - reach..=cy + reach {
+            'neighbors: for y in cy - reach..=cy + reach {
                 for x in cx - reach..=cx + reach {
                     if let Some(candidates) = cells.get(&(x, y)) {
                         for &j in candidates {
@@ -564,7 +564,7 @@ impl Simulation {
                             s.lifetime = life;
                             consumed[loser] = true;
                             if loser == i {
-                                break;
+                                break 'neighbors;
                             }
                         }
                     }
@@ -613,6 +613,25 @@ fn surface_noise(seed: u64, x: f32, y: f32, salt: u64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn consumed_drop_cannot_merge_again_in_another_cell() {
+        let mut sim = Simulation::new(1, 1920.0, 1080.0);
+        sim.drops.truncate(3);
+        for (drop, pos) in sim.drops.iter_mut().zip([
+            Vec2 { x: 31.0, y: 31.0 },
+            Vec2 { x: 32.0, y: 32.0 },
+            Vec2 { x: 31.0, y: 46.0 },
+        ]) {
+            drop.pos = pos;
+            drop.radius = 10.0;
+            drop.mass = 1000.0;
+            drop.pinned = false;
+            drop.birth_delay = 0.0;
+            drop.birth_fade = 1.0;
+        }
+        sim.merge_collisions();
+        assert!((sim.drops.iter().map(|d| d.mass).sum::<f32>() - 3000.0).abs() < 0.01);
+    }
     #[test]
     fn seeded_runs_match_and_stay_bounded() {
         let mut a = Simulation::new(42, 1920.0, 1080.0);

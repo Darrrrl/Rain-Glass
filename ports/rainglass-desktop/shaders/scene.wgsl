@@ -22,6 +22,7 @@ struct CompositeUniforms {
     imperfections: f32,
     fog_softness: f32,
     frame: vec4<f32>, // columns, rows, thickness in pixels, enabled
+    lightning: vec4<f32>,
 };
 
 struct VertexOut { @builtin(position) position: vec4<f32> };
@@ -124,5 +125,6 @@ fn frame_coverage(point: vec2<f32>) -> f32 {
     color = color*(1.0-edge*0.09)+vec3<f32>(0.012)*edge;
     let bar = frame_coverage(input.position.xy);
     color = mix(color,vec3<f32>(0.035,0.041,0.049),bar*0.96);
+    color += vec3<f32>(0.68, 0.78, 1.0) * scene.lightning.x;
     return vec4<f32>(color,1.0);
 }

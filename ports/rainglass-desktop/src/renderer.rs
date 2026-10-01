@@ -2,7 +2,7 @@ use crate::mask::WaterMask;
 use bytemuck::{Pod, Zeroable};
 use rainglass_core::settings::{AppSettings, FitMode, FrameLayout};
 use rainglass_core::simulation::Simulation;
-use std::path::Path;
+use std::{path::Path, time::Instant};
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -33,6 +33,7 @@ struct CompositeUniform {
     imperfections: f32,
     fog_softness: f32,
     frame: [f32; 4],
+    lightning: [f32; 4],
 }
 
 fn texture(
@@ -175,7 +176,25 @@ fn pipeline(
     })
 }
 
+struct SceneBindings {
+    sharp: wgpu::TextureView,
+    blur_x: wgpu::TextureView,
+    blur_y: wgpu::TextureView,
+    wallpaper: wgpu::BindGroup,
+    horizontal: wgpu::BindGroup,
+    vertical: wgpu::BindGroup,
+    composite: wgpu::BindGroup,
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct RenderTimings {
+    pub mask_ms: f64,
+    pub encode_ms: f64,
+    pub gpu_ms: Option<f64>,
+}
+
 pub struct SceneRenderer {
+    flash: f32,
     _wallpaper: wgpu::Texture,
     wallpaper_view: wgpu::TextureView,
     image_size: [u32; 2],
@@ -199,6 +218,10 @@ pub struct SceneRenderer {
     blur_x_uniform: wgpu::Buffer,
     blur_y_uniform: wgpu::Buffer,
     composite_uniform: wgpu::Buffer,
+    bindings: Option<SceneBindings>,
+    static_key: Option<(u32, f32, f32)>,
+    effect_scale: f32,
+    gpu_timer: Option<crate::diagnostics::GpuTimer>,
 }
 
 impl SceneRenderer {
@@ -294,7 +317,7 @@ impl SceneRenderer {
             surface_format,
         );
         let output_size = [output_size[0].max(1), output_size[1].max(1)];
-        let viewport = scaled(output_size, render_scale);
+        let viewport = scene_size(output_size, render_scale);
         let sharp = texture(
             device,
             "Sharp scene",
@@ -316,7 +339,8 @@ impl SceneRenderer {
             viewport[1],
             wgpu::TextureFormat::Rgba16Float,
         );
-        let mask = WaterMask::new((viewport[0] / 2).max(1), (viewport[1] / 2).max(1));
+        let effects = scaled(output_size, render_scale);
+        let mask = WaterMask::new((effects[0] / 2).max(1), (effects[1] / 2).max(1));
         let mask_texture = texture(
             device,
             "Water and fog",
@@ -367,9 +391,11 @@ impl SceneRenderer {
                 imperfections: 0.0,
                 fog_softness: 0.65,
                 frame: [0.0; 4],
+                lightning: [0.0; 4],
             },
         );
         Ok(Self {
+            flash: 0.0,
             _wallpaper: wallpaper,
             wallpaper_view,
             image_size: [iw, ih],
@@ -393,15 +419,22 @@ impl SceneRenderer {
             blur_x_uniform,
             blur_y_uniform,
             composite_uniform,
+            bindings: None,
+            static_key: None,
+            effect_scale: render_scale,
+            gpu_timer: crate::diagnostics::GpuTimer::new(device),
         })
     }
 
     pub fn resize(&mut self, device: &wgpu::Device, output_size: [u32; 2], render_scale: f32) {
         self.output_size = [output_size[0].max(1), output_size[1].max(1)];
-        let viewport = scaled(self.output_size, render_scale);
-        if viewport == self.viewport {
+        let viewport = scene_size(self.output_size, render_scale);
+        if viewport == self.viewport && render_scale == self.effect_scale {
             return;
         }
+        self.effect_scale = render_scale;
+        self.bindings = None;
+        self.static_key = None;
         self.viewport = viewport;
         self.sharp = texture(
             device,
@@ -425,7 +458,8 @@ impl SceneRenderer {
             wgpu::TextureFormat::Rgba16Float,
         );
         self.blur_size = viewport;
-        self.mask = WaterMask::new((viewport[0] / 2).max(1), (viewport[1] / 2).max(1));
+        let effects = scaled(self.output_size, render_scale);
+        self.mask = WaterMask::new((effects[0] / 2).max(1), (effects[1] / 2).max(1));
         self.mask_texture = texture(
             device,
             "Water and fog",
@@ -433,6 +467,10 @@ impl SceneRenderer {
             self.mask.height,
             wgpu::TextureFormat::Rgba8Unorm,
         );
+    }
+
+    pub fn set_lightning(&mut self, value: f32) {
+        self.flash = value;
     }
 
     pub fn render(
@@ -443,7 +481,8 @@ impl SceneRenderer {
         sim: &Simulation,
         settings: &AppSettings,
         dt: f32,
-    ) {
+    ) -> RenderTimings {
+        let started = Instant::now();
         let [width, height] = self.viewport;
         let blur = sim.parameters.blur as f32;
         let scale = if blur > 24.0 {
@@ -457,6 +496,8 @@ impl SceneRenderer {
         };
         let blur_size = [(width / scale).max(1), (height / scale).max(1)];
         if blur_size != self.blur_size {
+            self.bindings = None;
+            self.static_key = None;
             self.blur_size = blur_size;
             self.blurred_x = texture(
                 device,
@@ -478,39 +519,46 @@ impl SceneRenderer {
             FitMode::Fit => 1,
             FitMode::Stretch => 2,
         };
-        queue.write_buffer(
-            &self.wallpaper_uniform,
-            0,
-            bytemuck::bytes_of(&WallpaperUniform {
-                viewport: [width as f32, height as f32],
-                image: [self.image_size[0] as f32, self.image_size[1] as f32],
-                fit,
-                zoom: settings.zoom.clamp(1.0, 3.0),
-                pad: [0.0; 2],
-            }),
-        );
-        let sigma = (blur / scale as f32).clamp(0.0, 8.0);
-        let output = [blur_size[0] as f32, blur_size[1] as f32];
-        queue.write_buffer(
-            &self.blur_x_uniform,
-            0,
-            bytemuck::bytes_of(&BlurUniform {
-                step: [1.0 / output[0], 0.0],
-                output,
-                sigma,
-                pad: [0.0; 3],
-            }),
-        );
-        queue.write_buffer(
-            &self.blur_y_uniform,
-            0,
-            bytemuck::bytes_of(&BlurUniform {
-                step: [0.0, 1.0 / output[1]],
-                output,
-                sigma,
-                pad: [0.0; 3],
-            }),
-        );
+        let key = (fit, settings.zoom.clamp(1.0, 3.0), blur);
+        let static_changed = self.static_key != Some(key);
+        if self.static_key.map(|key| key.2 > 0.0) != Some(blur > 0.0) {
+            self.bindings = None;
+        }
+        if static_changed {
+            queue.write_buffer(
+                &self.wallpaper_uniform,
+                0,
+                bytemuck::bytes_of(&WallpaperUniform {
+                    viewport: [width as f32, height as f32],
+                    image: [self.image_size[0] as f32, self.image_size[1] as f32],
+                    fit,
+                    zoom: settings.zoom.clamp(1.0, 3.0),
+                    pad: [0.0; 2],
+                }),
+            );
+            let sigma = (blur / scale as f32).clamp(0.0, 8.0);
+            let output = [blur_size[0] as f32, blur_size[1] as f32];
+            queue.write_buffer(
+                &self.blur_x_uniform,
+                0,
+                bytemuck::bytes_of(&BlurUniform {
+                    step: [1.0 / output[0], 0.0],
+                    output,
+                    sigma,
+                    pad: [0.0; 3],
+                }),
+            );
+            queue.write_buffer(
+                &self.blur_y_uniform,
+                0,
+                bytemuck::bytes_of(&BlurUniform {
+                    step: [0.0, 1.0 / output[1]],
+                    output,
+                    sigma,
+                    pad: [0.0; 3],
+                }),
+            );
+        }
         let frame = match settings.frame.layout {
             FrameLayout::Off => [0.0, 0.0, 0.0, 0.0],
             FrameLayout::Two => [2.0, 1.0, settings.frame.thickness as f32, 1.0],
@@ -529,10 +577,13 @@ impl SceneRenderer {
                 imperfections: settings.atmosphere.imperfections as f32,
                 fog_softness: settings.atmosphere.fog_softness as f32,
                 frame,
+                lightning: [self.flash, 0.0, 0.0, 0.0],
             }),
         );
+        let mask_started = Instant::now();
         self.mask
             .update(sim, dt, settings.atmosphere.fog_return_time as f32);
+        let mask_ms = mask_started.elapsed().as_secs_f64() * 1000.0;
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.mask_texture,
@@ -552,78 +603,128 @@ impl SceneRenderer {
                 depth_or_array_layers: 1,
             },
         );
-        let sharp = self.sharp.create_view(&Default::default());
-        let bx = self.blurred_x.create_view(&Default::default());
-        let by = self.blurred_y.create_view(&Default::default());
-        let mask = self.mask_texture.create_view(&Default::default());
-        let wallpaper_bind = bind(
-            device,
-            &self.wallpaper_layout,
-            "Wallpaper",
-            &[&self.wallpaper_view],
-            &self.sampler,
-            &self.wallpaper_uniform,
-        );
-        let blur_x_bind = bind(
-            device,
-            &self.blur_layout,
-            "Horizontal blur",
-            &[&sharp],
-            &self.sampler,
-            &self.blur_x_uniform,
-        );
-        let blur_y_bind = bind(
-            device,
-            &self.blur_layout,
-            "Vertical blur",
-            &[&bx],
-            &self.sampler,
-            &self.blur_y_uniform,
-        );
-        let compose_bind = bind(
-            device,
-            &self.composite_layout,
-            "Wet glass",
-            &[&sharp, &by, &mask],
-            &self.sampler,
-            &self.composite_uniform,
-        );
+        if self.bindings.is_none() {
+            let sharp = self.sharp.create_view(&Default::default());
+            let bx = self.blurred_x.create_view(&Default::default());
+            let by = self.blurred_y.create_view(&Default::default());
+            let mask = self.mask_texture.create_view(&Default::default());
+            let wallpaper_bind = bind(
+                device,
+                &self.wallpaper_layout,
+                "Wallpaper",
+                &[&self.wallpaper_view],
+                &self.sampler,
+                &self.wallpaper_uniform,
+            );
+            let blur_x_bind = bind(
+                device,
+                &self.blur_layout,
+                "Horizontal blur",
+                &[&sharp],
+                &self.sampler,
+                &self.blur_x_uniform,
+            );
+            let blur_y_bind = bind(
+                device,
+                &self.blur_layout,
+                "Vertical blur",
+                &[&bx],
+                &self.sampler,
+                &self.blur_y_uniform,
+            );
+            let compose_bind = bind(
+                device,
+                &self.composite_layout,
+                "Wet glass",
+                &[&sharp, if blur > 0.0 { &by } else { &sharp }, &mask],
+                &self.sampler,
+                &self.composite_uniform,
+            );
+            self.bindings = Some(SceneBindings {
+                sharp,
+                blur_x: bx,
+                blur_y: by,
+                wallpaper: wallpaper_bind,
+                horizontal: blur_x_bind,
+                vertical: blur_y_bind,
+                composite: compose_bind,
+            });
+        }
+        let bindings = self.bindings.as_ref().unwrap();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("RainGlass frame"),
         });
-        draw(
-            &mut encoder,
-            &sharp,
-            &self.wallpaper_pipeline,
-            &wallpaper_bind,
-            &self.empty_bind,
-            0,
-        );
-        draw(
-            &mut encoder,
-            &bx,
-            &self.blur_pipeline,
-            &blur_x_bind,
-            &self.empty_bind,
-            1,
-        );
-        draw(
-            &mut encoder,
-            &by,
-            &self.blur_pipeline,
-            &blur_y_bind,
-            &self.empty_bind,
-            1,
-        );
+        let sample_gpu = self
+            .gpu_timer
+            .as_mut()
+            .map(|timer| timer.sample(device, queue))
+            .unwrap_or(false);
+        if sample_gpu {
+            encoder.write_timestamp(&self.gpu_timer.as_ref().unwrap().queries, 0);
+        }
+        if static_changed {
+            draw(
+                &mut encoder,
+                &bindings.sharp,
+                &self.wallpaper_pipeline,
+                &bindings.wallpaper,
+                &self.empty_bind,
+                0,
+            );
+            if blur > 0.0 {
+                draw(
+                    &mut encoder,
+                    &bindings.blur_x,
+                    &self.blur_pipeline,
+                    &bindings.horizontal,
+                    &self.empty_bind,
+                    1,
+                );
+                draw(
+                    &mut encoder,
+                    &bindings.blur_y,
+                    &self.blur_pipeline,
+                    &bindings.vertical,
+                    &self.empty_bind,
+                    1,
+                );
+            }
+            self.static_key = Some(key);
+        }
         draw(
             &mut encoder,
             target,
             &self.composite_pipeline,
-            &compose_bind,
+            &bindings.composite,
             &self.empty_bind,
             2,
         );
+        if sample_gpu {
+            let timer = self.gpu_timer.as_ref().unwrap();
+            encoder.write_timestamp(&timer.queries, 1);
+            timer.resolve(&mut encoder);
+        }
         queue.submit([encoder.finish()]);
+        if sample_gpu {
+            self.gpu_timer.as_mut().unwrap().read();
+        }
+        RenderTimings {
+            mask_ms,
+            encode_ms: started.elapsed().as_secs_f64() * 1000.0 - mask_ms,
+            gpu_ms: self.gpu_timer.as_ref().and_then(|timer| timer.last_ms),
+        }
+    }
+}
+
+fn scene_size(output: [u32; 2], effect_scale: f32) -> [u32; 2] {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = effect_scale;
+        [output[0].max(1), output[1].max(1)]
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        scaled(output, effect_scale)
     }
 }
 
@@ -668,8 +769,154 @@ fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+    static GPU_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn read_row(device: &wgpu::Device, queue: &wgpu::Queue, target: &wgpu::Texture) -> Vec<u8> {
+        let row_bytes = target.width() * 4;
+        let padded = row_bytes.div_ceil(256) * 256;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Sharpness readback"),
+            size: u64::from(padded),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: target,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: target.height() / 2,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(1),
+                },
+            },
+            wgpu::Extent3d {
+                width: target.width(),
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        buffer.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+            let _ = sender.send(r);
+        });
+        device.poll(wgpu::Maintain::Wait);
+        receiver.recv().unwrap().unwrap();
+        let result = buffer.slice(..).get_mapped_range()[..row_bytes as usize].to_vec();
+        buffer.unmap();
+        result
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn native_4k_preserves_pixels_and_updates_cached_resources() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap();
+        let instance = wgpu::Instance::default();
+        let Some(adapter) = pollster::block_on(instance.request_adapter(&Default::default()))
+        else {
+            eprintln!("SKIPPED: no GPU adapter for 4K readback");
+            return;
+        };
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+                .unwrap();
+        let path = std::env::temp_dir().join(format!("rainglass-4k-{}.png", std::process::id()));
+        image::RgbaImage::from_fn(3840, 2160, |x, _| {
+            let v = if x % 2 == 0 { 0 } else { 255 };
+            image::Rgba([v, v, v, 255])
+        })
+        .save(&path)
+        .unwrap();
+        let target = texture(
+            &device,
+            "4K target",
+            3840,
+            2160,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        );
+        let view = target.create_view(&Default::default());
+        let mut renderer = SceneRenderer::load(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            &path,
+            [3840, 2160],
+            0.6,
+        )
+        .unwrap();
+        assert_eq!(renderer.viewport, [3840, 2160]);
+        assert_eq!(renderer.sharp.size(), target.size());
+        let mut settings = AppSettings::default();
+        settings.rain.drop_count = 0.0;
+        settings.atmosphere.condensation = 0.0;
+        let mut sim = Simulation::new(42, 3840.0, 2160.0);
+        sim.set_parameters(settings.rain);
+        sim.parameters = settings.rain;
+        sim.step(1.0 / 60.0);
+        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        let sharp = read_row(&device, &queue, &target);
+        for x in 128..144 {
+            assert_eq!(sharp[x * 4], if x % 2 == 0 { 0 } else { 255 });
+        }
+        // An unchanged frame must preserve one-pixel detail from the cached image.
+        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        assert_eq!(read_row(&device, &queue, &target), sharp);
+        renderer.set_lightning(0.5);
+        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        let flash = read_row(&device, &queue, &target);
+        assert!(flash[128 * 4] > 100 && flash[128 * 4 + 2] >= flash[128 * 4]);
+        renderer.set_lightning(0.0);
+        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        assert_eq!(read_row(&device, &queue, &target), sharp);
+        sim.parameters.blur = 16.0;
+        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        let blurred = read_row(&device, &queue, &target);
+        assert!(blurred[128 * 4] > 100 && blurred[129 * 4] < 240);
+        sim.parameters.blur = 0.0;
+        settings.zoom = 1.5;
+        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        assert_ne!(read_row(&device, &queue, &target), sharp);
+        settings.zoom = 1.0;
+        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        assert_eq!(read_row(&device, &queue, &target), sharp);
+        renderer.resize(&device, [1920, 1080], 0.85);
+        let resized = texture(
+            &device,
+            "Resized target",
+            1920,
+            1080,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        );
+        sim.resize(1920.0, 1080.0);
+        renderer.render(
+            &device,
+            &queue,
+            &resized.create_view(&Default::default()),
+            &sim,
+            &settings,
+            1.0 / 60.0,
+        );
+        assert_eq!(read_row(&device, &queue, &resized).len(), 1920 * 4);
+        renderer.resize(&device, [3840, 2160], 1.0);
+        sim.resize(3840.0, 2160.0);
+        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        assert_eq!(read_row(&device, &queue, &target), sharp);
+        let _ = std::fs::remove_file(path);
+    }
     #[test]
     fn blur_preserves_blue_channel() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap();
         let instance = wgpu::Instance::default();
         let Some(adapter) =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))

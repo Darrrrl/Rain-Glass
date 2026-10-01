@@ -4,3 +4,8 @@ xcuserdata/
 .build/
 DerivedData/
 /ports/target/
+
+/ports/windows/RainGlass.Controls/bin/
+/ports/windows/RainGlass.Controls/obj/
+/ports/windows/dist/
+/ports/RainGlass-Windows.zip

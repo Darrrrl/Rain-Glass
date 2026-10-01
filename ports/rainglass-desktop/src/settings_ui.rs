@@ -1,8 +1,8 @@
 use crate::settings_store::SettingsStore;
 use eframe::egui;
-#[cfg(target_os = "windows")]
-use rainglass_core::settings::Quality;
 use rainglass_core::settings::{AppSettings, FitMode, FrameLayout, ScenePreset};
+#[cfg(target_os = "windows")]
+use rainglass_core::settings::{FrameRate, Quality};
 use std::path::Path;
 
 pub fn show(store: SettingsStore) -> Result<(), String> {
@@ -224,10 +224,24 @@ impl eframe::App for SettingsPanel {
                 ui.checkbox(&mut self.settings.paused, "Pause rain");
                 #[cfg(target_os = "windows")]
                 ui.horizontal(|ui| {
-                    ui.label("Quality");
+                    ui.label("Effects quality");
                     ui.selectable_value(&mut self.settings.quality, Quality::Eco, "Eco");
                     ui.selectable_value(&mut self.settings.quality, Quality::Balanced, "Balanced");
                     ui.selectable_value(&mut self.settings.quality, Quality::Ultra, "Ultra");
+                });
+                #[cfg(target_os = "windows")]
+                ui.horizontal(|ui| {
+                    ui.label("Frame rate");
+                    ui.selectable_value(&mut self.settings.frame_rate, FrameRate::Fps30, "30 FPS");
+                    ui.selectable_value(&mut self.settings.frame_rate, FrameRate::Fps60, "60 FPS");
+                    ui.selectable_value(
+                        &mut self.settings.frame_rate,
+                        FrameRate::Monitor,
+                        "Monitor refresh rate",
+                    );
+                    if self.settings.frame_rate == FrameRate::Legacy120 {
+                        ui.label("120 FPS (previous setting)");
+                    }
                 });
                 #[cfg(target_os = "linux")]
                 ui.label("GNOME renders at 30 FPS with adaptive resolution.");
