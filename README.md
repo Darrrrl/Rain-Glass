@@ -63,6 +63,8 @@ swiftc RainGlass/App/AppSettings.swift RainGlass/App/VisualSettings.swift RainGl
 /tmp/ScenePresetCheck
 swiftc RainGlass/App/AppSettings.swift RainGlass/App/DesktopWindowManager.swift Tests/DesktopModeCheck.swift -o /tmp/DesktopModeCheck
 /tmp/DesktopModeCheck
+swiftc RainGlass/App/AppSettings.swift RainGlass/App/VisualSettings.swift RainGlass/Simulation/RainParameters.swift RainGlass/Simulation/RainSimulation.swift RainGlass/Simulation/LightningTiming.swift RainGlass/Renderer/RenderDiagnostics.swift RainGlass/Renderer/MetalRenderer.swift RainGlass/Renderer/MetalView.swift RainGlass/Wallpaper/WallpaperController.swift Tests/RenderFrameRateCheck.swift -o /tmp/RenderFrameRateCheck
+/tmp/RenderFrameRateCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app
 swiftc RainGlass/Simulation/LightningTiming.swift Tests/LightningTimingCheck.swift -o /tmp/LightningTimingCheck
 /tmp/LightningTimingCheck
 swiftc -parse-as-library Tests/AudioAssetsCheck.swift -o /tmp/AudioAssetsCheck

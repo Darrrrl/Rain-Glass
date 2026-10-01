@@ -20,6 +20,8 @@ final class WeatherController: ObservableObject {
     private let provider: any WeatherProvider
     private let defaults: UserDefaults
     private var refreshTask: Task<Void, Never>?
+    private var searchRequest = UUID()
+    private var refreshRequest = UUID()
 
     init(provider: any WeatherProvider = OpenMeteoWeatherProvider(), defaults: UserDefaults = .standard) {
         self.provider = provider
@@ -42,7 +44,13 @@ final class WeatherController: ObservableObject {
     func setEnabled(_ value: Bool) {
         enabled = value
         defaults.set(value, forKey: AppSettings.weatherEnabledKey)
-        if value { start() } else { refreshTask?.cancel(); refreshTask = nil }
+        if value { start() } else {
+            refreshRequest = UUID()
+            clearSearch()
+            refreshTask?.cancel()
+            refreshTask = nil
+            errorMessage = nil
+        }
     }
 
     func start() {
@@ -56,23 +64,37 @@ final class WeatherController: ObservableObject {
     }
 
     func search(_ raw: String) async {
+        let request = UUID()
+        searchRequest = request
         let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard query.count >= 2 else { searchResults = []; return }
+        guard query.count >= 2 else { clearSearch(); return }
         isSearching = true
-        defer { isSearching = false }
+        defer { if searchRequest == request { isSearching = false } }
         do {
-            searchResults = try await provider.searchCities(query)
+            let results = try await provider.searchCities(query)
+            guard searchRequest == request, !Task.isCancelled else { return }
+            searchResults = results
             errorMessage = searchResults.isEmpty ? "No matching cities found." : nil
         } catch {
+            guard searchRequest == request, !Task.isCancelled,
+                  !(error is CancellationError), (error as? URLError)?.code != .cancelled else { return }
             log.error("Weather search failed: \(error.localizedDescription, privacy: .public)")
             errorMessage = "City search failed: \(error.localizedDescription)"
         }
     }
 
+    func clearSearch() {
+        searchRequest = UUID()
+        searchResults = []
+        isSearching = false
+        errorMessage = nil
+    }
+
     func select(_ selected: WeatherCity) {
         city = selected
         conditions = nil
-        searchResults = []
+        clearSearch()
+        refreshRequest = UUID()
         defaults.set(try? JSONEncoder().encode(selected), forKey: AppSettings.weatherCityKey)
         defaults.removeObject(forKey: AppSettings.weatherCacheKey)
         refreshTask?.cancel()
@@ -82,14 +104,20 @@ final class WeatherController: ObservableObject {
 
     func refresh() async {
         guard enabled, let city else { return }
+        let request = UUID()
+        refreshRequest = request
         do {
             let latest = try await provider.currentConditions(for: city)
-            guard self.city?.id == city.id, enabled else { return }
+            guard refreshRequest == request, self.city?.id == city.id, enabled,
+                  !Task.isCancelled else { return }
             conditions = latest
             errorMessage = nil
             defaults.set(try? JSONEncoder().encode(WeatherCache(cityID: city.id, conditions: latest)),
                          forKey: AppSettings.weatherCacheKey)
         } catch {
+            guard refreshRequest == request, self.city?.id == city.id, enabled,
+                  !Task.isCancelled, !(error is CancellationError),
+                  (error as? URLError)?.code != .cancelled else { return }
             log.error("Weather refresh failed: \(error.localizedDescription, privacy: .public)")
             errorMessage = "Weather update failed: \(error.localizedDescription)"
         }
