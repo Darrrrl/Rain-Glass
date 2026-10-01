@@ -283,7 +283,7 @@ impl ApplicationHandler for App {
             }
         }
     }
-    fn window_event(&mut self, _event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         let Some(scene) = self.scenes.iter_mut().find(|scene| scene.window.id() == id) else {
             return;
         };
@@ -318,7 +318,7 @@ impl ApplicationHandler for App {
                 match scene.surface.get_current_texture() {
                     Ok(frame) => {
                         let view = frame.texture.create_view(&Default::default());
-                        scene.renderer.render(
+                        let result = scene.renderer.render(
                             &scene.device,
                             &scene.queue,
                             &view,
@@ -326,7 +326,18 @@ impl ApplicationHandler for App {
                             &self.settings,
                             dt,
                         );
-                        frame.present();
+                        match result {
+                            Ok(()) => frame.present(),
+                            Err(error) => {
+                                // Discard the frame normally before the event loop
+                                // releases the surface; do not unwind through wgpu.
+                                drop(view);
+                                drop(frame);
+                                eprintln!("RainGlass: {error}");
+                                self.last_error = Some(error);
+                                event_loop.exit();
+                            }
+                        }
                     }
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                         scene.surface.configure(&scene.device, &scene.config)

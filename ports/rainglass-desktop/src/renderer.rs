@@ -446,7 +446,10 @@ impl SceneRenderer {
         sim: &Simulation,
         settings: &AppSettings,
         dt: f32,
-    ) {
+    ) -> Result<(), String> {
+        // Capture validation failures before unwinding can leave an acquired
+        // surface frame undiscarded (and cause a second Vulkan teardown panic).
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
         let [width, height] = self.viewport;
         let blur = sim.parameters.blur as f32;
         let scale = if blur > 24.0 {
@@ -609,6 +612,10 @@ impl SceneRenderer {
             &compose_bind,
         );
         queue.submit([encoder.finish()]);
+        match pollster::block_on(device.pop_error_scope()) {
+            Some(error) => Err(format!("Scene rendering failed: {error}")),
+            None => Ok(()),
+        }
     }
 }
 
@@ -654,6 +661,7 @@ mod tests {
         let Some(adapter) =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         else {
+            eprintln!("Skipping GPU render check: no adapter available");
             return;
         };
         let (device, queue) =
@@ -689,7 +697,29 @@ mod tests {
         for _ in 0..120 {
             sim.step(1.0 / 60.0);
         }
-        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        // A validation failure must return to the caller so an acquired surface
+        // frame can be discarded outside panic unwinding. A later valid draw
+        // must still work, proving that the error scope was balanced.
+        let incompatible_target = texture(
+            &device,
+            "Incompatible test target",
+            64,
+            64,
+            wgpu::TextureFormat::Rgba8Unorm,
+        );
+        renderer
+            .render(
+                &device,
+                &queue,
+                &incompatible_target.create_view(&Default::default()),
+                &sim,
+                &settings,
+                1.0 / 60.0,
+            )
+            .expect_err("An incompatible target must return a validation error");
+        renderer
+            .render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0)
+            .unwrap();
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Blue output"),
             size: 64 * 64 * 4,
