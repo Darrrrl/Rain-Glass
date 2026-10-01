@@ -187,6 +187,7 @@ struct SceneBindings {
 }
 
 #[derive(Default, Clone, Copy)]
+#[derive(Debug)]
 pub struct RenderTimings {
     pub mask_ms: f64,
     pub encode_ms: f64,
@@ -202,7 +203,6 @@ pub struct SceneRenderer {
     wallpaper_layout: wgpu::BindGroupLayout,
     blur_layout: wgpu::BindGroupLayout,
     composite_layout: wgpu::BindGroupLayout,
-    empty_bind: wgpu::BindGroup,
     wallpaper_pipeline: wgpu::RenderPipeline,
     blur_pipeline: wgpu::RenderPipeline,
     composite_pipeline: wgpu::RenderPipeline,
@@ -275,26 +275,31 @@ impl SceneRenderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("RainGlass scene"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/scene.wgsl").into()),
+        let vertex = include_str!("../shaders/fullscreen.wgsl");
+        let wallpaper_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("RainGlass wallpaper"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{vertex}\n{}", include_str!("../shaders/wallpaper.wgsl")).into(),
+            ),
+        });
+        let blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("RainGlass blur"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{vertex}\n{}", include_str!("../shaders/blur.wgsl")).into(),
+            ),
+        });
+        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("RainGlass composite"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{vertex}\n{}", include_str!("../shaders/composite.wgsl")).into(),
+            ),
         });
         let wallpaper_layout = bind_layout(device, "Wallpaper layout", 1);
         let blur_layout = bind_layout(device, "Blur layout", 1);
         let composite_layout = bind_layout(device, "Composite layout", 3);
-        // Each entry point uses one group; lower unused group indices must be empty.
-        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Unused scene group"),
-            entries: &[],
-        });
-        let empty_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Unused scene group"),
-            layout: &empty_layout,
-            entries: &[],
-        });
         let wallpaper_pipeline = pipeline(
             device,
-            &shader,
+            &wallpaper_shader,
             &[&wallpaper_layout],
             "Wallpaper pass",
             "wallpaper_frag",
@@ -302,16 +307,16 @@ impl SceneRenderer {
         );
         let blur_pipeline = pipeline(
             device,
-            &shader,
-            &[&empty_layout, &blur_layout],
+            &blur_shader,
+            &[&blur_layout],
             "Linear Gaussian blur",
             "blur_frag",
             wgpu::TextureFormat::Rgba16Float,
         );
         let composite_pipeline = pipeline(
             device,
-            &shader,
-            &[&empty_layout, &empty_layout, &composite_layout],
+            &composite_shader,
+            &[&composite_layout],
             "Wet glass composite",
             "composite_frag",
             surface_format,
@@ -403,7 +408,6 @@ impl SceneRenderer {
             wallpaper_layout,
             blur_layout,
             composite_layout,
-            empty_bind,
             wallpaper_pipeline,
             blur_pipeline,
             composite_pipeline,
@@ -481,7 +485,8 @@ impl SceneRenderer {
         sim: &Simulation,
         settings: &AppSettings,
         dt: f32,
-    ) -> RenderTimings {
+    ) -> Result<RenderTimings, String> {
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
         let started = Instant::now();
         let [width, height] = self.viewport;
         let blur = sim.parameters.blur as f32;
@@ -668,8 +673,6 @@ impl SceneRenderer {
                 &bindings.sharp,
                 &self.wallpaper_pipeline,
                 &bindings.wallpaper,
-                &self.empty_bind,
-                0,
             );
             if blur > 0.0 {
                 draw(
@@ -677,16 +680,12 @@ impl SceneRenderer {
                     &bindings.blur_x,
                     &self.blur_pipeline,
                     &bindings.horizontal,
-                    &self.empty_bind,
-                    1,
                 );
                 draw(
                     &mut encoder,
                     &bindings.blur_y,
                     &self.blur_pipeline,
                     &bindings.vertical,
-                    &self.empty_bind,
-                    1,
                 );
             }
             self.static_key = Some(key);
@@ -696,8 +695,6 @@ impl SceneRenderer {
             target,
             &self.composite_pipeline,
             &bindings.composite,
-            &self.empty_bind,
-            2,
         );
         if sample_gpu {
             let timer = self.gpu_timer.as_ref().unwrap();
@@ -708,11 +705,15 @@ impl SceneRenderer {
         if sample_gpu {
             self.gpu_timer.as_mut().unwrap().read();
         }
-        RenderTimings {
+        if let Some(error) = pollster::block_on(device.pop_error_scope()) {
+            self.static_key = None;
+            return Err(format!("Scene rendering failed: {error}"));
+        }
+        Ok(RenderTimings {
             mask_ms,
             encode_ms: started.elapsed().as_secs_f64() * 1000.0 - mask_ms,
             gpu_ms: self.gpu_timer.as_ref().and_then(|timer| timer.last_ms),
-        }
+        })
     }
 }
 
@@ -741,8 +742,6 @@ fn draw(
     target: &wgpu::TextureView,
     pipeline: &wgpu::RenderPipeline,
     bind: &wgpu::BindGroup,
-    empty_bind: &wgpu::BindGroup,
-    group: u32,
 ) {
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("Scene pass"),
@@ -759,10 +758,7 @@ fn draw(
         timestamp_writes: None,
     });
     pass.set_pipeline(pipeline);
-    for index in 0..group {
-        pass.set_bind_group(index, empty_bind, &[]);
-    }
-    pass.set_bind_group(group, bind, &[]);
+    pass.set_bind_group(0, bind, &[]);
     pass.draw(0..3, 0..1);
 }
 
@@ -864,31 +860,45 @@ mod tests {
         sim.set_parameters(settings.rain);
         sim.parameters = settings.rain;
         sim.step(1.0 / 60.0);
-        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        renderer
+            .render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0)
+            .unwrap();
         let sharp = read_row(&device, &queue, &target);
         for x in 128..144 {
             assert_eq!(sharp[x * 4], if x % 2 == 0 { 0 } else { 255 });
         }
         // An unchanged frame must preserve one-pixel detail from the cached image.
-        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        renderer
+            .render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0)
+            .unwrap();
         assert_eq!(read_row(&device, &queue, &target), sharp);
         renderer.set_lightning(0.5);
-        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        renderer
+            .render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0)
+            .unwrap();
         let flash = read_row(&device, &queue, &target);
         assert!(flash[128 * 4] > 100 && flash[128 * 4 + 2] >= flash[128 * 4]);
         renderer.set_lightning(0.0);
-        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        renderer
+            .render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0)
+            .unwrap();
         assert_eq!(read_row(&device, &queue, &target), sharp);
         sim.parameters.blur = 16.0;
-        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        renderer
+            .render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0)
+            .unwrap();
         let blurred = read_row(&device, &queue, &target);
         assert!(blurred[128 * 4] > 100 && blurred[129 * 4] < 240);
         sim.parameters.blur = 0.0;
         settings.zoom = 1.5;
-        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        renderer
+            .render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0)
+            .unwrap();
         assert_ne!(read_row(&device, &queue, &target), sharp);
         settings.zoom = 1.0;
-        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        renderer
+            .render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0)
+            .unwrap();
         assert_eq!(read_row(&device, &queue, &target), sharp);
         renderer.resize(&device, [1920, 1080], 0.85);
         let resized = texture(
@@ -899,18 +909,22 @@ mod tests {
             wgpu::TextureFormat::Rgba8UnormSrgb,
         );
         sim.resize(1920.0, 1080.0);
-        renderer.render(
-            &device,
-            &queue,
-            &resized.create_view(&Default::default()),
-            &sim,
-            &settings,
-            1.0 / 60.0,
-        );
+        renderer
+            .render(
+                &device,
+                &queue,
+                &resized.create_view(&Default::default()),
+                &sim,
+                &settings,
+                1.0 / 60.0,
+            )
+            .unwrap();
         assert_eq!(read_row(&device, &queue, &resized).len(), 1920 * 4);
         renderer.resize(&device, [3840, 2160], 1.0);
         sim.resize(3840.0, 2160.0);
-        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        renderer
+            .render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0)
+            .unwrap();
         assert_eq!(read_row(&device, &queue, &target), sharp);
         let _ = std::fs::remove_file(path);
     }
@@ -921,6 +935,7 @@ mod tests {
         let Some(adapter) =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         else {
+            eprintln!("Skipping GPU render check: no adapter available");
             return;
         };
         let (device, queue) =
@@ -956,7 +971,29 @@ mod tests {
         for _ in 0..120 {
             sim.step(1.0 / 60.0);
         }
-        renderer.render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0);
+        // A validation failure must return to the caller so an acquired surface
+        // frame can be discarded outside panic unwinding. A later valid draw
+        // must still work, proving that the error scope was balanced.
+        let incompatible_target = texture(
+            &device,
+            "Incompatible test target",
+            64,
+            64,
+            wgpu::TextureFormat::Rgba8Unorm,
+        );
+        renderer
+            .render(
+                &device,
+                &queue,
+                &incompatible_target.create_view(&Default::default()),
+                &sim,
+                &settings,
+                1.0 / 60.0,
+            )
+            .expect_err("An incompatible target must return a validation error");
+        renderer
+            .render(&device, &queue, &view, &sim, &settings, 1.0 / 60.0)
+            .unwrap();
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Blue output"),
             size: 64 * 64 * 4,

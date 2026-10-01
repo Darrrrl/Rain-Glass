@@ -702,7 +702,7 @@ impl ApplicationHandler for App {
             self.audio = Some(audio::AudioWorker::start());
         }
     }
-    fn window_event(&mut self, _event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         let Some(scene) = self.scenes.iter_mut().find(|scene| scene.window.id() == id) else {
             return;
         };
@@ -760,7 +760,7 @@ impl ApplicationHandler for App {
                     Ok(frame) => {
                         let acquire_ms = present_started.elapsed().as_secs_f64() * 1000.0;
                         let view = frame.texture.create_view(&Default::default());
-                        let timings = scene.renderer.render(
+                        let result = scene.renderer.render(
                             &scene.device,
                             &scene.queue,
                             &view,
@@ -768,6 +768,17 @@ impl ApplicationHandler for App {
                             &self.settings,
                             dt,
                         );
+                        let timings = match result {
+                            Ok(timings) => timings,
+                            Err(error) => {
+                                drop(view);
+                                drop(frame);
+                                eprintln!("RainGlass: {error}");
+                                self.last_error = Some(error);
+                                event_loop.exit();
+                                return;
+                            }
+                        };
                         let present_started = Instant::now();
                         frame.present();
                         scene.fps_frames += 1;
