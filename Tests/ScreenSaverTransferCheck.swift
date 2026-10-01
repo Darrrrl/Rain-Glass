@@ -47,8 +47,10 @@ struct ScreenSaverTransferCheck {
         let saverURL = URL(fileURLWithPath: CommandLine.arguments[1])
         let imageURL = URL(fileURLWithPath: CommandLine.arguments[2])
         let image = try Data(contentsOf: imageURL)
+        var rain = RainParameters.rain
+        rain.splatsEnabled = true
         let scene = ScreenSaverScene(version: 1, wallpaperFileName: "transferred.png",
-                                     scaleMode: "fill", zoom: 1, rain: .rain,
+                                     scaleMode: "fill", zoom: 1, rain: rain,
                                      atmosphere: .init(), frame: .init(), quality: "eco", seed: "7")
         let responder = SceneResponder(image: image, scene: try JSONEncoder().encode(scene))
         _ = NSApplication.shared

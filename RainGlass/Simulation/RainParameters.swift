@@ -11,6 +11,7 @@ struct RainParameters: Codable, Equatable {
     var trailPersistence: Double
     var lightningEnabled: Bool = false
     var stormFrequency: Double = 0
+    var splatsEnabled: Bool = false
 
     static let rain = RainParameters(
         intensity: 0.72, dropletSize: 1, dropCount: 4_800, gravity: 1,
@@ -30,6 +31,7 @@ struct RainParameters: Codable, Equatable {
         )
         result.lightningEnabled = lightningEnabled
         result.stormFrequency = stormFrequency.clamped(to: 0...30)
+        result.splatsEnabled = splatsEnabled
         return result
     }
 
@@ -47,12 +49,13 @@ struct RainParameters: Codable, Equatable {
         )
         result.lightningEnabled = target.lightningEnabled
         result.stormFrequency = blend(stormFrequency, target.stormFrequency)
+        result.splatsEnabled = target.splatsEnabled
         return result
     }
 
     private enum CodingKeys: String, CodingKey {
         case intensity, dropletSize, dropCount, gravity, wind, blur, refraction, trailPersistence
-        case lightningEnabled, stormFrequency
+        case lightningEnabled, stormFrequency, splatsEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -67,11 +70,12 @@ struct RainParameters: Codable, Equatable {
         trailPersistence = try values.decode(Double.self, forKey: .trailPersistence)
         lightningEnabled = try values.decodeIfPresent(Bool.self, forKey: .lightningEnabled) ?? false
         stormFrequency = try values.decodeIfPresent(Double.self, forKey: .stormFrequency) ?? 0
+        splatsEnabled = try values.decodeIfPresent(Bool.self, forKey: .splatsEnabled) ?? false
     }
 
     init(intensity: Double, dropletSize: Double, dropCount: Double, gravity: Double,
          wind: Double, blur: Double, refraction: Double, trailPersistence: Double,
-         lightningEnabled: Bool = false, stormFrequency: Double = 0) {
+         lightningEnabled: Bool = false, stormFrequency: Double = 0, splatsEnabled: Bool = false) {
         self.intensity = intensity
         self.dropletSize = dropletSize
         self.dropCount = dropCount
@@ -82,6 +86,7 @@ struct RainParameters: Codable, Equatable {
         self.trailPersistence = trailPersistence
         self.lightningEnabled = lightningEnabled
         self.stormFrequency = stormFrequency
+        self.splatsEnabled = splatsEnabled
     }
 }
 

@@ -19,6 +19,7 @@ struct ScenePresetCheck {
             assert(defaults.string(forKey: AppSettings.renderQualityKey) == "ultra")
             assert(defaults.data(forKey: AppSettings.wallpaperBookmarkKey) == Data([1, 2, 3]))
         }
+        rain.editSplatsEnabled(true)
         store.save(name: "My Storm", rain: rain.parameters, atmosphere: AtmosphereSettings(),
                    audio: audio.settings, frame: WindowFrameSettings(layout: .six, thickness: 18))
         assert(store.presets.count == 1)
@@ -30,6 +31,9 @@ struct ScenePresetCheck {
         try imported.importData(data)
         assert(imported.presets.count == 1)
         assert(imported.presets[0].rain == store.presets[0].rain)
+        assert(imported.presets[0].rain.splatsEnabled)
+        imported.select("scene:\(imported.presets[0].id.uuidString)", rain: rain, audio: audio)
+        assert(rain.parameters.splatsEnabled)
         assert(imported.presets[0].audio == store.presets[0].audio)
         assert(imported.presets[0].atmosphere == store.presets[0].atmosphere)
         assert(imported.presets[0].frame.layout == .six && imported.presets[0].frame.thickness == 18)
@@ -56,6 +60,9 @@ struct ScenePresetCheck {
         } catch { }
         var legacy = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         var legacyPreset = legacy["preset"] as! [String: Any]
+        var legacyRain = legacyPreset["rain"] as! [String: Any]
+        legacyRain.removeValue(forKey: "splatsEnabled")
+        legacyPreset["rain"] = legacyRain
         legacyPreset.removeValue(forKey: "frame")
         var legacyAudio = legacyPreset["audio"] as! [String: Any]
         legacyAudio.removeValue(forKey: "glassTaps")
@@ -67,6 +74,7 @@ struct ScenePresetCheck {
         assert(restored.frame.layout == .off && restored.frame.thickness == 12)
         assert(restored.audio.glassTaps == 0.2)
         imported.select("scene:\(restored.id.uuidString)", rain: rain, audio: audio)
+        assert(!rain.parameters.splatsEnabled)
         assert(otherDefaults.string(forKey: AppSettings.windowPaneLayoutKey) == "off")
         print("Scene presets round trip and invalid imports checked")
     }

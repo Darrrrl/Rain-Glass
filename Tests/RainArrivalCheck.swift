@@ -26,6 +26,8 @@ struct RainArrivalCheck {
             for event in events {
                 assert(seenEvents.insert(event.id).inserted)
                 assert((0...1).contains(event.horizontalPosition))
+                assert(event.position.x / Float(size.width) == event.horizontalPosition)
+                assert(event.position == matchingEvents.first(where: { $0.id == event.id })?.position)
             }
             if tick == 120 { secondSecond = first.droplets.count }
             if tick < 240 { assert(events.isEmpty) }

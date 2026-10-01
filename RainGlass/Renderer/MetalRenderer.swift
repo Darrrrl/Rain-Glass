@@ -17,6 +17,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private let wallpaperPipeline: MTLRenderPipelineState?
     private let displayPipeline: MTLRenderPipelineState?
     private let dropletPipeline: MTLRenderPipelineState?
+    private let splatPipeline: MTLRenderPipelineState?
     private let trailPipeline: MTLRenderPipelineState?
     private let waterDropletPipeline: MTLRenderPipelineState?
     private let waterTrailPipeline: MTLRenderPipelineState?
@@ -36,9 +37,12 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private var renderInstances: [DropletRenderInstance] = []
     private var trailInstances: [TrailRenderInstance] = []
     private var wipeInstances: [TrailRenderInstance] = []
+    private var splats = ImpactSplats()
+    private var splatInstances: [SplatRenderInstance] = []
     private var previousDropPositions: [UInt64: SIMD2<Float>] = [:]
     private var instanceBuffers: [MTLBuffer] = []
     private var trailBuffers: [MTLBuffer] = []
+    private var splatBuffers: [MTLBuffer] = []
     private var nextInstanceBuffer = 0
     private let framesInFlight = DispatchSemaphore(value: 3)
     private weak var observedWindow: NSWindow?
@@ -100,6 +104,16 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         dropletDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
         dropletDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         dropletPipeline = try? device.makeRenderPipelineState(descriptor: dropletDescriptor)
+        let splatDescriptor = MTLRenderPipelineDescriptor()
+        splatDescriptor.vertexFunction = library?.makeFunction(name: "splatVertex")
+        splatDescriptor.fragmentFunction = library?.makeFunction(name: "splatFragment")
+        splatDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm_srgb
+        splatDescriptor.colorAttachments[0].isBlendingEnabled = true
+        splatDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        splatDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        splatDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
+        splatDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        splatPipeline = try? device.makeRenderPipelineState(descriptor: splatDescriptor)
         let trailDescriptor = MTLRenderPipelineDescriptor()
         trailDescriptor.vertexFunction = library?.makeFunction(name: "trailVertex")
         trailDescriptor.fragmentFunction = library?.makeFunction(name: "trailFragment")
@@ -164,6 +178,10 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         trailBuffers = (0..<3).compactMap { _ in
             device.makeBuffer(length: trailLength, options: .storageModeShared)
         }
+        splatBuffers = (0..<3).compactMap { _ in
+            device.makeBuffer(length: ImpactSplats.maximumCount * MemoryLayout<SplatRenderInstance>.stride,
+                              options: .storageModeShared)
+        }
 
         let samplerDescriptor = MTLSamplerDescriptor()
         samplerDescriptor.minFilter = .linear
@@ -174,7 +192,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         sampler = device.makeSamplerState(descriptor: samplerDescriptor)
         super.init()
         if commandQueue == nil || wallpaperPipeline == nil || displayPipeline == nil ||
-            waterDropletPipeline == nil || waterTrailPipeline == nil || fogWipeDropletPipeline == nil ||
+            splatPipeline == nil || waterDropletPipeline == nil || waterTrailPipeline == nil || fogWipeDropletPipeline == nil ||
             fogWipeTrailPipeline == nil || wetGlassPipeline == nil || fogPipeline == nil ||
             sampler == nil {
             log.error("Metal pipeline or command queue creation failed")
@@ -195,6 +213,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         rainSeed = raw
         simulation.reset(seed: UInt64(raw) ?? UInt64.random(in: UInt64.min...UInt64.max))
         previousDropPositions.removeAll(keepingCapacity: true)
+        splats.clear()
         fogDensity = nil
         fogNext = nil
         simulationAccumulator = 0
@@ -263,6 +282,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     @MainActor
     func setSceneParameters(_ parameters: RainParameters, in view: MTKView) {
         simulation.setParameters(parameters)
+        if !parameters.splatsEnabled { splats.clear() }
         targetBlurRadius = parameters.blur
         view.needsDisplay = true
     }
@@ -303,6 +323,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         diagnostics.updateSize(width: Int(size.width), height: Int(size.height))
         backgroundDirty = true
         previousDropPositions.removeAll(keepingCapacity: true)
+        splats.clear()
         simulation.resize(to: view.bounds.size)
         view.needsDisplay = true
     }
@@ -331,6 +352,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         }
         if steps == 4 { simulationAccumulator = 0 }
         let arrivals = simulation.drainArrivalEvents()
+        if simulation.currentParameters.splatsEnabled {
+            splats.step(dt: Float(frameElapsed))
+            splats.append(arrivals)
+        } else {
+            splats.clear()
+        }
+        splats.renderInstances(into: &splatInstances)
         if !arrivals.isEmpty, view.window?.occlusionState.contains(.visible) == true,
            !manuallyPaused, let onArrivals {
             let cues = arrivals.map { (id: $0.id, radius: $0.radius, x: $0.horizontalPosition) }
@@ -409,10 +437,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         previousDropPositions = Dictionary(uniqueKeysWithValues: simulation.droplets.map { ($0.id, $0.position) })
         var dropBuffer: MTLBuffer?
         var trailBuffer: MTLBuffer?
-        if (!renderInstances.isEmpty || !trailInstances.isEmpty), instanceBuffers.count == 3, trailBuffers.count == 3 {
+        var splatBuffer: MTLBuffer?
+        if (!renderInstances.isEmpty || !trailInstances.isEmpty || !splatInstances.isEmpty),
+           instanceBuffers.count == 3, trailBuffers.count == 3 {
             framesInFlight.wait()
             dropBuffer = instanceBuffers[nextInstanceBuffer]
             trailBuffer = trailBuffers[nextInstanceBuffer]
+            if splatBuffers.count == 3 { splatBuffer = splatBuffers[nextInstanceBuffer] }
             nextInstanceBuffer = (nextInstanceBuffer + 1) % 3
             if !renderInstances.isEmpty {
                 renderInstances.withUnsafeBytes { source in
@@ -428,6 +459,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 wipeInstances.withUnsafeBytes { source in
                     trailBuffer!.contents().advanced(by: trailInstances.count * MemoryLayout<TrailRenderInstance>.stride)
                         .copyMemory(from: source.baseAddress!, byteCount: source.count)
+                }
+            }
+            if !splatInstances.isEmpty, let splatBuffer {
+                splatInstances.withUnsafeBytes { source in
+                    splatBuffer.contents().copyMemory(from: source.baseAddress!, byteCount: source.count)
                 }
             }
         }
@@ -553,6 +589,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 encoder.setVertexBuffer(dropBuffer, offset: 0, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: renderInstances.count)
             }
+        }
+        if let splatBuffer, let splatPipeline, !splatInstances.isEmpty {
+            encoder.setRenderPipelineState(splatPipeline)
+            encoder.setVertexBytes(&viewportPoints, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+            encoder.setVertexBuffer(splatBuffer, offset: 0, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6,
+                                   instanceCount: splatInstances.count)
         }
         encoder.endEncoding()
         if dropBuffer != nil {

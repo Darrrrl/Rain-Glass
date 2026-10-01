@@ -9,13 +9,24 @@ struct ScreenSaverSceneCheck {
         defer { try? FileManager.default.removeItem(at: directory) }
         let image = directory.appendingPathComponent("wallpaper.jpg")
         try Data([0xFF, 0xD8, 0xFF]).write(to: image)
+        var splatRain = RainParameters.rain
+        splatRain.splatsEnabled = true
         let scene = ScreenSaverScene(version: 1, wallpaperFileName: image.lastPathComponent,
-                                     scaleMode: "fill", zoom: 1.5, rain: .rain,
+                                     scaleMode: "fill", zoom: 1.5, rain: splatRain,
                                      atmosphere: .init(), frame: .init(), quality: "balanced", seed: "42")
         try ScreenSaverSceneStore.write(scene, in: directory)
         let restored = try ScreenSaverSceneStore.read(in: directory)
         assert(restored.scene == scene)
         assert(restored.imageURL == image)
+        assert(restored.scene.rain.splatsEnabled)
+
+        var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(scene)) as! [String: Any]
+        var legacyRain = legacy["rain"] as! [String: Any]
+        legacyRain.removeValue(forKey: "splatsEnabled")
+        legacy["rain"] = legacyRain
+        let oldScene = try JSONDecoder().decode(ScreenSaverScene.self,
+                                                from: JSONSerialization.data(withJSONObject: legacy))
+        assert(!oldScene.rain.splatsEnabled)
 
         let invalid = ScreenSaverScene(version: 1, wallpaperFileName: "../outside.jpg",
                                       scaleMode: "fill", zoom: 1, rain: .rain,

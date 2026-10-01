@@ -120,6 +120,62 @@ fragment float4 dropletFragment(DropletVertex in [[stage_in]]) {
     return float4(color, saturate(alpha));
 }
 
+struct SplatInstance {
+    float4 geometry;   // center, drawing radius, normalized age
+    float4 appearance; // fade, drop radius, variation, unused
+};
+
+struct SplatVertexOut {
+    float4 position [[position]];
+    float2 local;
+    float progress;
+    float fade;
+    float variation;
+};
+
+vertex SplatVertexOut splatVertex(
+    uint vertexID [[vertex_id]],
+    uint instanceID [[instance_id]],
+    constant SplatInstance* splats [[buffer(0)]],
+    constant float2& viewportPoints [[buffer(1)]]
+) {
+    const float2 corners[6] = {
+        float2(-1, -1), float2(1, -1), float2(-1, 1),
+        float2(-1, 1), float2(1, -1), float2(1, 1)
+    };
+    SplatInstance splat = splats[instanceID];
+    float2 local = corners[vertexID];
+    float2 point = splat.geometry.xy + local * splat.geometry.z;
+    SplatVertexOut out;
+    out.position = float4(point.x / viewportPoints.x * 2 - 1,
+                          1 - point.y / viewportPoints.y * 2, 0, 1);
+    out.local = local;
+    out.progress = splat.geometry.w;
+    out.fade = splat.appearance.x;
+    out.variation = splat.appearance.z;
+    return out;
+}
+
+fragment float4 splatFragment(SplatVertexOut in [[stage_in]]) {
+    float distance = length(in.local);
+    float ringRadius = mix(0.28, 0.77, in.progress);
+    float ring = 1 - smoothstep(0.025, 0.09, abs(distance - ringRadius));
+    const float2 directions[4] = {
+        float2(1, 0.12), float2(-0.72, 0.66),
+        float2(0.34, -0.93), float2(-0.37, -0.8)
+    };
+    float satellites = 0;
+    for (uint i = 0; i < 4; ++i) {
+        float angle = (in.variation - 0.5) * 0.55 + float(i) * 0.13;
+        float2 direction = float2(directions[i].x * cos(angle) - directions[i].y * sin(angle),
+                                  directions[i].x * sin(angle) + directions[i].y * cos(angle));
+        float2 center = direction * (0.4 + in.progress * (0.27 + float(i) * 0.035));
+        satellites = max(satellites, 1 - smoothstep(0.035, 0.13, length(in.local - center)));
+    }
+    float alpha = in.fade * (ring * 0.2 + satellites * 0.19);
+    return float4(0.84, 0.93, 0.98, saturate(alpha));
+}
+
 struct TrailVertex {
     float4 position [[position]];
     float2 local;
