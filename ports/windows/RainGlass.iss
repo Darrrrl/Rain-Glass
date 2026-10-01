@@ -19,6 +19,10 @@ UninstallDisplayIcon={app}\{#AppExe}
 
 [Files]
 Source: "..\target\release\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\target\release\ui\*"; DestDir: "{app}\ui"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "RainGlass"; Flags: uninsdeletevalue
 
 [Icons]
 Name: "{group}\RainGlass"; Filename: "{app}\{#AppExe}"

@@ -1,4 +1,6 @@
-use rainglass_core::settings::{AppSettings, FitMode, PresetFile, Quality, RainParameters};
+use rainglass_core::settings::{
+    AppSettings, FitMode, FrameRate, PresetFile, Quality, RainParameters,
+};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -23,7 +25,7 @@ impl SettingsStore {
     pub fn load(&self) -> AppSettings {
         fs::read_to_string(&self.path)
             .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
+            .and_then(|s| decode_settings(&s).ok())
             .unwrap_or_default()
     }
     pub fn save(&self, settings: &AppSettings) -> Result<(), String> {
@@ -82,6 +84,19 @@ impl SettingsStore {
                     _ => return Err("Quality must be eco, balanced, or ultra".into()),
                 }
             }
+            "--fps" => {
+                settings.frame_rate = match args.get(1).map(String::as_str) {
+                    Some("30") => FrameRate::Fps30,
+                    Some("60") => FrameRate::Fps60,
+                    Some("monitor") => FrameRate::Monitor,
+                    Some(value) => FrameRate::Fixed(
+                        value
+                            .parse::<u32>()
+                            .map_err(|_| "Frame rate must be a non-negative integer or monitor")?,
+                    ),
+                    _ => return Err("Frame rate must be a non-negative integer or monitor".into()),
+                };
+            }
             "--preset" => {
                 let name = args.get(1).ok_or("Provide a preset name")?;
                 if let Some(preset) = settings
@@ -135,13 +150,120 @@ impl SettingsStore {
                 return Ok(true);
             }
             "--help" | "-h" => {
-                println!("RainGlass controls: --choose-wallpaper, --wallpaper PATH, --toggle-pause, --toggle-mute, --preset NAME, --blur 0..64, --zoom 1..3, --fit fill|fit|stretch, --volume 0..1, --quality eco|balanced|ultra, --import-preset FILE, --export-preset NAME FILE, --status");
+                println!("RainGlass controls: --choose-wallpaper, --wallpaper PATH, --toggle-pause, --toggle-mute, --preset NAME, --blur 0..64, --zoom 1..3, --fit fill|fit|stretch, --volume 0..1, --quality eco|balanced|ultra, --fps 30|60|monitor, --import-preset FILE, --export-preset NAME FILE, --status");
                 return Ok(true);
             }
             other => return Err(format!("Unknown option: {other}")),
         }
         self.save(&settings)?;
         Ok(true)
+    }
+}
+
+fn decode_settings(json: &str) -> Result<AppSettings, serde_json::Error> {
+    let mut value: serde_json::Value = serde_json::from_str(json)?;
+    if let Some(object) = value.as_object_mut() {
+        if !object.contains_key("frame_rate") {
+            let rate = match object.get("quality").and_then(|v| v.as_str()) {
+                Some("eco") => "30",
+                Some("ultra") => "120",
+                _ => "60",
+            };
+            object.insert("frame_rate".into(), rate.into());
+        }
+        if let Some(rain) = object.get_mut("rain").and_then(|v| v.as_object_mut()) {
+            if !rain.contains_key("thunderProbability") {
+                let frequency = rain
+                    .get("stormFrequency")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                rain.insert(
+                    "thunderProbability".into(),
+                    serde_json::json!(frequency / 3600.0),
+                );
+            }
+        }
+    }
+    serde_json::from_value(value)
+}
+
+#[cfg(test)]
+mod frame_rate_tests {
+    use super::*;
+
+    #[test]
+    fn migrates_rates_and_preserves_explicit_blur() {
+        for (quality, expected) in [("eco", 30.0), ("balanced", 60.0), ("ultra", 120.0)] {
+            let settings = decode_settings(&format!(
+                r#"{{"quality":"{quality}","rain":{{"blur":16}}}}"#
+            ))
+            .unwrap();
+            assert_eq!(settings.frame_rate.hz(None), expected);
+            assert_eq!(settings.rain.blur, 16.0);
+        }
+        #[cfg(target_os = "windows")]
+        assert_eq!(AppSettings::default().rain.blur, 0.0);
+    }
+
+    #[test]
+    fn monitor_rate_round_trips_independently_of_quality() {
+        let settings = decode_settings(r#"{"quality":"eco","frame_rate":"monitor"}"#).unwrap();
+        assert_eq!(settings.frame_rate.hz(Some(165000)), 165.0);
+        assert_eq!(settings.frame_rate.hz(None), 60.0);
+        assert_eq!(settings.frame_rate.hz(Some(0)), 60.0);
+        assert_eq!(
+            decode_settings(&serde_json::to_string(&settings).unwrap())
+                .unwrap()
+                .frame_rate,
+            FrameRate::Monitor
+        );
+    }
+
+    #[test]
+    fn custom_zero_and_legacy_storm_migrate_without_changing_audio() {
+        let settings = decode_settings(r#"{"frame_rate":{"fixed":0},"rain":{"stormFrequency":12,"blur":64},"audio":{"muted":true,"master":0.8}}"#).unwrap();
+        assert_eq!(settings.frame_rate.hz(Some(165000)), 0.0);
+        assert_eq!(settings.rain.thunder_probability, Some(12.0 / 3600.0));
+        assert!(settings.audio.muted);
+        assert_eq!(settings.audio.master, 0.8);
+        for fps in [30, 60, 165, 240] {
+            let mut s = settings.clone();
+            s.frame_rate = FrameRate::Fixed(fps);
+            assert_eq!(
+                decode_settings(&serde_json::to_string(&s).unwrap())
+                    .unwrap()
+                    .frame_rate
+                    .hz(None),
+                fps as f64
+            );
+        }
+    }
+
+    #[test]
+    fn frame_rate_commands_persist_and_reject_invalid_values() {
+        let folder = std::env::temp_dir().join(format!("rainglass-rate-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let store = SettingsStore {
+            path: folder.join("settings.json"),
+        };
+        for (value, expected) in [
+            ("30", FrameRate::Fps30),
+            ("60", FrameRate::Fps60),
+            ("monitor", FrameRate::Monitor),
+        ] {
+            store
+                .apply_command(&["--fps".into(), value.into()])
+                .unwrap();
+            assert_eq!(store.load().frame_rate, expected);
+        }
+        assert!(store.apply_command(&["--fps".into(), "-1".into()]).is_err());
+        assert_eq!(store.load().frame_rate, FrameRate::Monitor);
+        store
+            .apply_command(&["--quality".into(), "eco".into()])
+            .unwrap();
+        assert_eq!(store.load().frame_rate, FrameRate::Monitor);
+        fs::remove_file(&store.path).unwrap();
+        fs::remove_dir(folder).unwrap();
     }
 }
 
@@ -156,7 +278,7 @@ fn parse_range(value: Option<&String>, min: f64, max: f64) -> Result<f64, String
     Ok(v)
 }
 
-fn apply_builtin(settings: &mut AppSettings, name: &str) -> Result<(), String> {
+pub fn apply_builtin(settings: &mut AppSettings, name: &str) -> Result<(), String> {
     let was_muted = settings.audio.muted;
     settings.rain = RainParameters::default();
     settings.atmosphere = Default::default();
