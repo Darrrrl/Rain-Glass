@@ -183,6 +183,7 @@ pub struct SceneRenderer {
     wallpaper_layout: wgpu::BindGroupLayout,
     blur_layout: wgpu::BindGroupLayout,
     composite_layout: wgpu::BindGroupLayout,
+    empty_bind: wgpu::BindGroup,
     wallpaper_pipeline: wgpu::RenderPipeline,
     blur_pipeline: wgpu::RenderPipeline,
     composite_pipeline: wgpu::RenderPipeline,
@@ -258,11 +259,20 @@ impl SceneRenderer {
         let wallpaper_layout = bind_layout(device, "Wallpaper layout", 1);
         let blur_layout = bind_layout(device, "Blur layout", 1);
         let composite_layout = bind_layout(device, "Composite layout", 3);
-        let layouts = [&wallpaper_layout, &blur_layout, &composite_layout];
+        // Each entry point uses one group; lower unused group indices must be empty.
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Unused scene group"),
+            entries: &[],
+        });
+        let empty_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Unused scene group"),
+            layout: &empty_layout,
+            entries: &[],
+        });
         let wallpaper_pipeline = pipeline(
             device,
             &shader,
-            &layouts,
+            &[&wallpaper_layout],
             "Wallpaper pass",
             "wallpaper_frag",
             wgpu::TextureFormat::Rgba16Float,
@@ -270,7 +280,7 @@ impl SceneRenderer {
         let blur_pipeline = pipeline(
             device,
             &shader,
-            &layouts,
+            &[&empty_layout, &blur_layout],
             "Linear Gaussian blur",
             "blur_frag",
             wgpu::TextureFormat::Rgba16Float,
@@ -278,7 +288,7 @@ impl SceneRenderer {
         let composite_pipeline = pipeline(
             device,
             &shader,
-            &layouts,
+            &[&empty_layout, &empty_layout, &composite_layout],
             "Wet glass composite",
             "composite_frag",
             surface_format,
@@ -367,6 +377,7 @@ impl SceneRenderer {
             wallpaper_layout,
             blur_layout,
             composite_layout,
+            empty_bind,
             wallpaper_pipeline,
             blur_pipeline,
             composite_pipeline,
@@ -585,15 +596,31 @@ impl SceneRenderer {
             &sharp,
             &self.wallpaper_pipeline,
             &wallpaper_bind,
+            &self.empty_bind,
             0,
         );
-        draw(&mut encoder, &bx, &self.blur_pipeline, &blur_x_bind, 1);
-        draw(&mut encoder, &by, &self.blur_pipeline, &blur_y_bind, 1);
+        draw(
+            &mut encoder,
+            &bx,
+            &self.blur_pipeline,
+            &blur_x_bind,
+            &self.empty_bind,
+            1,
+        );
+        draw(
+            &mut encoder,
+            &by,
+            &self.blur_pipeline,
+            &blur_y_bind,
+            &self.empty_bind,
+            1,
+        );
         draw(
             &mut encoder,
             target,
             &self.composite_pipeline,
             &compose_bind,
+            &self.empty_bind,
             2,
         );
         queue.submit([encoder.finish()]);
@@ -613,6 +640,7 @@ fn draw(
     target: &wgpu::TextureView,
     pipeline: &wgpu::RenderPipeline,
     bind: &wgpu::BindGroup,
+    empty_bind: &wgpu::BindGroup,
     group: u32,
 ) {
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -630,6 +658,9 @@ fn draw(
         timestamp_writes: None,
     });
     pass.set_pipeline(pipeline);
+    for index in 0..group {
+        pass.set_bind_group(index, empty_bind, &[]);
+    }
     pass.set_bind_group(group, bind, &[]);
     pass.draw(0..3, 0..1);
 }
