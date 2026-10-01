@@ -158,6 +158,10 @@ struct SettingsView: View {
             Section("Rain") {
                 control("Intensity", \.intensity, in: 0...1, format: "%.2f")
                 control("Droplet size", \.dropletSize, in: 0.5...2, format: "%.2f×")
+                Toggle("Splat on impact", isOn: Binding(
+                    get: { rainSettings.parameters.splatsEnabled },
+                    set: { rainSettings.editSplatsEnabled($0); scenePresets.markCustom() }
+                ))
                 DisclosureGroup("Detailed rain controls") {
                     control("Drop count", \.dropCount, in: 0...6_000, format: "%.0f")
                     control("Gravity", \.gravity, in: 0...2, format: "%.2f×")

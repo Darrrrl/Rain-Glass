@@ -34,6 +34,53 @@ struct DropArrivalEvent: Sendable {
     let id: UInt64
     let radius: Float
     let horizontalPosition: Float
+    let position: SIMD2<Float>
+}
+
+struct SplatRenderInstance {
+    var geometry: SIMD4<Float> // center, drawing radius, normalized age
+    var appearance: SIMD4<Float> // opacity, radius, deterministic variation, unused
+}
+
+struct ImpactSplat: Equatable {
+    let position: SIMD2<Float>
+    let radius: Float
+    let variation: Float
+    var age: Float
+}
+
+struct ImpactSplats {
+    static let maximumCount = 64
+    static let duration: Float = 0.25
+    private(set) var active: [ImpactSplat] = []
+
+    mutating func clear() { active.removeAll(keepingCapacity: true) }
+
+    mutating func step(dt: Float) {
+        for index in active.indices { active[index].age += max(0, dt) }
+        active.removeAll { $0.age >= Self.duration }
+    }
+
+    mutating func append(_ arrivals: [DropArrivalEvent]) {
+        for event in arrivals {
+            let variation = Float((event.id &* 0x9E3779B97F4A7C15) >> 40) / Float(1 << 24)
+            active.append(ImpactSplat(position: event.position, radius: event.radius,
+                                      variation: variation, age: 0))
+        }
+        if active.count > Self.maximumCount { active.removeFirst(active.count - Self.maximumCount) }
+    }
+
+    func renderInstances(into output: inout [SplatRenderInstance]) {
+        output.removeAll(keepingCapacity: true)
+        for splat in active {
+            let progress = min(1, splat.age / Self.duration)
+            output.append(SplatRenderInstance(
+                geometry: SIMD4(splat.position.x, splat.position.y,
+                                splat.radius * (1.4 + progress * 1.3) + 5, progress),
+                appearance: SIMD4((1 - progress) * (1 - progress), splat.radius,
+                                  splat.variation, 0)))
+        }
+    }
 }
 
 struct DropletRenderInstance {
@@ -189,7 +236,8 @@ final class RainSimulation {
                 if resizeSoundSuppression <= 0 {
                     arrivalEvents.append(DropArrivalEvent(
                         id: droplets[index].id, radius: droplets[index].radius,
-                        horizontalPosition: droplets[index].position.x / Float(viewport.width)))
+                        horizontalPosition: droplets[index].position.x / Float(viewport.width),
+                        position: droplets[index].position))
                 }
             }
             if !droplets[index].pinned && progress >= 1 {

@@ -11,6 +11,7 @@ struct RainSettingsCheck {
 
         let first = RainSettingsStore(defaults: defaults)
         assert(first.parameters.blur == 3.5)
+        assert(!first.parameters.splatsEnabled)
         first.select(BuiltInRainPreset.drizzle.id)
         assert(first.parameters == BuiltInRainPreset.drizzle.parameters)
         first.edit(\.wind, value: -0.4)
@@ -39,15 +40,19 @@ struct RainSettingsCheck {
         assert(second.parameters.stormFrequency == 6)
         second.editLightningEnabled(false)
         assert(second.selectionID == "custom")
+        second.editSplatsEnabled(true)
+        assert(RainSettingsStore(defaults: defaults).parameters.splatsEnabled)
 
         var legacy = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(RainParameters.rain)) as! [String: Any]
         legacy.removeValue(forKey: "lightningEnabled")
         legacy.removeValue(forKey: "stormFrequency")
+        legacy.removeValue(forKey: "splatsEnabled")
         let migrated = try! JSONDecoder().decode(RainParameters.self, from: JSONSerialization.data(withJSONObject: legacy))
-        assert(!migrated.lightningEnabled && migrated.stormFrequency == 0)
+        assert(!migrated.lightningEnabled && migrated.stormFrequency == 0 && !migrated.splatsEnabled)
         var legacyStorm = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(BuiltInRainPreset.storm.parameters)) as! [String: Any]
         legacyStorm.removeValue(forKey: "lightningEnabled")
         legacyStorm.removeValue(forKey: "stormFrequency")
+        legacyStorm.removeValue(forKey: "splatsEnabled")
         let snapshot: [String: Any] = ["selectionID": "storm", "parameters": legacyStorm, "presets": []]
         defaults.set(try! JSONSerialization.data(withJSONObject: snapshot), forKey: AppSettings.rainSettingsKey)
         let restoredStorm = RainSettingsStore(defaults: defaults)

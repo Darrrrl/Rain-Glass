@@ -36,6 +36,7 @@ The RainGlass build embeds `RainGlass.saver`. Choose **Install Screen Saver…**
 
 Drops merge when they touch, sliding drops collect smaller ones, and their water traces fade. A quality-scaled water surface bends the cached wallpaper behind drops and trails. Condensation persists in a low resolution texture: moving drops wipe clear paths through it, and fog slowly returns. Fog softness and return time have separate controls.
 Moving drops respond to a seeded adhesion pattern fixed to the glass, so they creep, pause, or slide at different speeds and curve smoothly with the surface and wind. Merges retain the surviving drop's center. Startup begins with scattered small beads, then fills over two seconds; replacements wait briefly and fade in without moving their centers. Larger drops sag and narrow toward their upper attachment; nearby stationary pairs can share a thin water bridge. Optional two, four, and six pane frames sit in front of the rain without changing the simulation.
+The optional **Splat on impact** checkbox in Scene settings adds a brief ring and tiny satellite marks when a larger drop lands. It starts off and is saved with scene presets; the screen saver mirrors the choice.
 The wallpaper can be zoomed from 1× to 3× in fill, fit, or stretch mode. The background blur control reaches 64 px; fog remains softer than the chosen wallpaper blur. Water traces retain their width as they fade, keeping adjoining sections connected.
 
 ## Checks
@@ -52,9 +53,14 @@ swiftc -parse-as-library Tests/TrailJunctionCheck.swift -o /tmp/TrailJunctionChe
 swiftc RainGlass/Simulation/RainParameters.swift RainGlass/App/VisualSettings.swift RainGlass/App/ScreenSaverScene.swift Tests/ScreenSaverSceneCheck.swift -o /tmp/ScreenSaverSceneCheck
 /tmp/ScreenSaverSceneCheck
 swiftc RainGlass/Simulation/RainParameters.swift RainGlass/App/VisualSettings.swift RainGlass/App/ScreenSaverScene.swift Tests/ScreenSaverTransferCheck.swift -o /tmp/ScreenSaverTransferCheck
-/tmp/ScreenSaverTransferCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app/Contents/Resources/RainGlass.saver RainGlass/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png
+mkdir -p /tmp/RainGlassSaverTransferCheckFresh
+CFFIXED_USER_HOME=/tmp/RainGlassSaverTransferCheckFresh /tmp/ScreenSaverTransferCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app/Contents/Resources/RainGlass.saver RainGlass/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png
 swiftc -O -assert-config Debug RainGlass/Simulation/RainParameters.swift RainGlass/Simulation/RainSimulation.swift Tests/RainArrivalCheck.swift -o /tmp/RainArrivalCheck
 /tmp/RainArrivalCheck
+swiftc RainGlass/Simulation/RainParameters.swift RainGlass/Simulation/RainSimulation.swift Tests/RainSplatCheck.swift -o /tmp/RainSplatCheck
+/tmp/RainSplatCheck
+swiftc RainGlass/Simulation/RainParameters.swift RainGlass/Simulation/RainSimulation.swift Tests/RainSplatRenderCheck.swift -o /tmp/RainSplatRenderCheck
+/tmp/RainSplatRenderCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app
 swiftc -parse-as-library Tests/FogHistoryCheck.swift -o /tmp/FogHistoryCheck
 /tmp/FogHistoryCheck /tmp/RainGlassDerivedData/Build/Products/Debug/RainGlass.app/Contents/Resources/default.metallib
 swiftc RainGlass/Simulation/RainParameters.swift RainGlass/App/AppSettings.swift RainGlass/App/RainSettingsStore.swift Tests/RainSettingsCheck.swift -o /tmp/RainSettingsCheck

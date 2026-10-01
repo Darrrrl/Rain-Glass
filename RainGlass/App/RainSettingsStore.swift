@@ -116,6 +116,13 @@ final class RainSettingsStore: ObservableObject {
         persist()
     }
 
+    func editSplatsEnabled(_ enabled: Bool) {
+        parameters.splatsEnabled = enabled
+        selectionID = "custom"
+        errorMessage = nil
+        persist()
+    }
+
     func save(named rawName: String) {
         guard let name = validName(rawName) else { return }
         let preset = NamedRainPreset(id: UUID(), name: name, parameters: parameters)
