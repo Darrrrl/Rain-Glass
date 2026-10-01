@@ -251,34 +251,48 @@ impl SceneRenderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("RainGlass scene"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/scene.wgsl").into()),
+        let vertex = include_str!("../shaders/fullscreen.wgsl");
+        let wallpaper_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("RainGlass wallpaper"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{vertex}\n{}", include_str!("../shaders/wallpaper.wgsl")).into(),
+            ),
+        });
+        let blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("RainGlass blur"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{vertex}\n{}", include_str!("../shaders/blur.wgsl")).into(),
+            ),
+        });
+        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("RainGlass composite"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{vertex}\n{}", include_str!("../shaders/composite.wgsl")).into(),
+            ),
         });
         let wallpaper_layout = bind_layout(device, "Wallpaper layout", 1);
         let blur_layout = bind_layout(device, "Blur layout", 1);
         let composite_layout = bind_layout(device, "Composite layout", 3);
-        let layouts = [&wallpaper_layout, &blur_layout, &composite_layout];
         let wallpaper_pipeline = pipeline(
             device,
-            &shader,
-            &layouts,
+            &wallpaper_shader,
+            &[&wallpaper_layout],
             "Wallpaper pass",
             "wallpaper_frag",
             wgpu::TextureFormat::Rgba16Float,
         );
         let blur_pipeline = pipeline(
             device,
-            &shader,
-            &layouts,
+            &blur_shader,
+            &[&blur_layout],
             "Linear Gaussian blur",
             "blur_frag",
             wgpu::TextureFormat::Rgba16Float,
         );
         let composite_pipeline = pipeline(
             device,
-            &shader,
-            &layouts,
+            &composite_shader,
+            &[&composite_layout],
             "Wet glass composite",
             "composite_frag",
             surface_format,
@@ -585,16 +599,14 @@ impl SceneRenderer {
             &sharp,
             &self.wallpaper_pipeline,
             &wallpaper_bind,
-            0,
         );
-        draw(&mut encoder, &bx, &self.blur_pipeline, &blur_x_bind, 1);
-        draw(&mut encoder, &by, &self.blur_pipeline, &blur_y_bind, 1);
+        draw(&mut encoder, &bx, &self.blur_pipeline, &blur_x_bind);
+        draw(&mut encoder, &by, &self.blur_pipeline, &blur_y_bind);
         draw(
             &mut encoder,
             target,
             &self.composite_pipeline,
             &compose_bind,
-            2,
         );
         queue.submit([encoder.finish()]);
     }
@@ -613,7 +625,6 @@ fn draw(
     target: &wgpu::TextureView,
     pipeline: &wgpu::RenderPipeline,
     bind: &wgpu::BindGroup,
-    group: u32,
 ) {
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("Scene pass"),
@@ -630,7 +641,7 @@ fn draw(
         timestamp_writes: None,
     });
     pass.set_pipeline(pipeline);
-    pass.set_bind_group(group, bind, &[]);
+    pass.set_bind_group(0, bind, &[]);
     pass.draw(0..3, 0..1);
 }
 
