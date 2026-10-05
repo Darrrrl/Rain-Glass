@@ -11,6 +11,37 @@ struct ScreenSaverScene: Codable, Equatable {
     let frame: WindowFrameSettings
     let quality: String
     let seed: String
+    var snow: SnowSettings = .init()
+    var frost: FrostSettings = .init()
+
+    var isSupported: Bool { (1...2).contains(version) && snow.isValid && frost.isValid }
+
+    private enum CodingKeys: String, CodingKey {
+        case version, wallpaperFileName, scaleMode, zoom, rain, atmosphere, frame, quality, seed, snow, frost
+    }
+
+    init(version: Int, wallpaperFileName: String, scaleMode: String, zoom: Double,
+         rain: RainParameters, atmosphere: AtmosphereSettings, frame: WindowFrameSettings,
+         quality: String, seed: String, snow: SnowSettings = .init(), frost: FrostSettings = .init()) {
+        self.version = version; self.wallpaperFileName = wallpaperFileName
+        self.scaleMode = scaleMode; self.zoom = zoom; self.rain = rain; self.atmosphere = atmosphere
+        self.frame = frame; self.quality = quality; self.seed = seed; self.snow = snow; self.frost = frost
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        version = try values.decode(Int.self, forKey: .version)
+        wallpaperFileName = try values.decode(String.self, forKey: .wallpaperFileName)
+        scaleMode = try values.decode(String.self, forKey: .scaleMode)
+        zoom = try values.decode(Double.self, forKey: .zoom)
+        rain = try values.decode(RainParameters.self, forKey: .rain)
+        atmosphere = try values.decode(AtmosphereSettings.self, forKey: .atmosphere)
+        frame = try values.decode(WindowFrameSettings.self, forKey: .frame)
+        quality = try values.decode(String.self, forKey: .quality)
+        seed = try values.decode(String.self, forKey: .seed)
+        snow = try values.decodeIfPresent(SnowSettings.self, forKey: .snow) ?? .init()
+        frost = try values.decodeIfPresent(FrostSettings.self, forKey: .frost) ?? .init()
+    }
 }
 
 enum ScreenSaverSceneStore {
@@ -18,6 +49,10 @@ enum ScreenSaverSceneStore {
     static let snapshotName = "scene.json"
 
     static func directory() throws -> URL {
+        if ProcessInfo.processInfo.processName == "ScreenSaverTransferCheck",
+           let testPath = ProcessInfo.processInfo.environment["RAINGLASS_SAVER_TEST_DIRECTORY"] {
+            return URL(fileURLWithPath: testPath, isDirectory: true)
+        }
         let fallback = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("RainGlass/ScreenSaver", isDirectory: true)
         if let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID) {
@@ -38,7 +73,7 @@ enum ScreenSaverSceneStore {
     static func read(in directory: URL) throws -> (scene: ScreenSaverScene, imageURL: URL) {
         let data = try Data(contentsOf: directory.appendingPathComponent(snapshotName))
         let scene = try JSONDecoder().decode(ScreenSaverScene.self, from: data)
-        guard scene.version == 1,
+        guard scene.isSupported,
               (scene.wallpaperFileName as NSString).lastPathComponent == scene.wallpaperFileName else {
             throw CocoaError(.fileReadCorruptFile)
         }

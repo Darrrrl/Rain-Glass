@@ -13,7 +13,10 @@ struct WallpaperZoomCheck {
     static func main() throws {
         let device = MTLCreateSystemDefaultDevice()!
         let queue = device.makeCommandQueue()!
-        let library = try device.makeLibrary(URL: URL(fileURLWithPath: CommandLine.arguments[1]))
+        let libraryURL = URL(fileURLWithPath: CommandLine.arguments[1])
+        let library = try libraryURL.pathExtension == "metal"
+            ? device.makeLibrary(source: String(contentsOf: libraryURL, encoding: .utf8), options: nil)
+            : device.makeLibrary(URL: libraryURL)
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = library.makeFunction(name: "fullscreenVertex")
         descriptor.fragmentFunction = library.makeFunction(name: "wallpaperFragment")

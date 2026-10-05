@@ -15,6 +15,9 @@ struct MetalView: NSViewRepresentable {
     let quality: RenderQuality
     let atmosphere: AtmosphereSettings
     let manuallyPaused: Bool
+    var snow: SnowSettings = .init()
+    var frost: FrostSettings = .init()
+    var frame: WindowFrameSettings = .init()
     var onArrivals: (@MainActor @Sendable ([(id: UInt64, radius: Float, x: Float)], UUID) -> Void)? = nil
 
     func makeCoordinator() -> MetalRenderer {
@@ -30,7 +33,8 @@ struct MetalView: NSViewRepresentable {
         view.colorPixelFormat = .bgra8Unorm_srgb
         view.clearColor = MTLClearColor(red: 0.045, green: 0.055, blue: 0.075, alpha: 1)
         view.framebufferOnly = true
-        view.enableSetNeedsDisplay = false
+        // A paused desktop still needs one drawable for its wallpaper and later scene edits.
+        view.enableSetNeedsDisplay = true
         view.preferredFramesPerSecond = quality.targetFPS
         view.isPaused = true
         view.needsDisplay = true
@@ -45,6 +49,7 @@ struct MetalView: NSViewRepresentable {
         context.coordinator.setSceneParameters(parameters, in: view)
         context.coordinator.setQuality(quality, in: view)
         context.coordinator.setAtmosphere(atmosphere, in: view)
+        context.coordinator.setWinter(snow: snow, frost: frost, frame: frame, in: view)
         context.coordinator.setWallpaper(
             texture: wallpaperTexture,
             revision: wallpaperRevision,

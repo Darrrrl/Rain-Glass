@@ -21,6 +21,17 @@ struct ContentView: View {
     @AppStorage(AppSettings.windowFrameThicknessKey) private var frameThickness = 12.0
     @StateObject private var diagnostics = RenderDiagnostics()
 
+    @AppStorage(AppSettings.snowAmountKey) private var snowAmount = 0.0
+    @AppStorage(AppSettings.snowFlakeSizeKey) private var snowFlakeSize = 1.0
+    @AppStorage(AppSettings.snowSpeedKey) private var snowSpeed = 1.0
+    @AppStorage(AppSettings.snowWindKey) private var snowWind = 0.0
+    @AppStorage(AppSettings.frostCoverageKey) private var frostCoverage = 0.0
+    @AppStorage(AppSettings.frostDetailKey) private var frostDetail = 0.6
+    private var snow: SnowSettings {
+        SnowSettings(amount: snowAmount, flakeSize: snowFlakeSize, speed: snowSpeed, wind: snowWind).clamped()
+    }
+    private var frost: FrostSettings { FrostSettings(coverage: frostCoverage, detail: frostDetail).clamped() }
+
     var body: some View {
         Group {
             if let device = wallpaper.device {
@@ -41,6 +52,9 @@ struct ContentView: View {
                                                        imperfections: imperfections, fogSoftness: fogSoftness,
                                                        fogReturnTime: fogReturnTime),
                         manuallyPaused: paused,
+                        snow: snow, frost: frost,
+                        frame: WindowFrameSettings(layout: WindowPaneLayout(rawValue: frameLayoutRaw) ?? .off,
+                                                   thickness: frameThickness),
                         onArrivals: { arrivals, sourceID in
                             audio.playArrivals(arrivals, sourceID: sourceID)
                         }

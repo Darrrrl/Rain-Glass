@@ -19,6 +19,8 @@ final class WeatherController: ObservableObject {
 
     private let provider: any WeatherProvider
     private let defaults: UserDefaults
+    private var searchGeneration = 0
+    private var refreshGeneration = 0
     private var refreshTask: Task<Void, Never>?
 
     init(provider: any WeatherProvider = OpenMeteoWeatherProvider(), defaults: UserDefaults = .standard) {
@@ -32,7 +34,11 @@ final class WeatherController: ObservableObject {
         }
     }
 
-    var isStale: Bool { conditions.map { Date().timeIntervalSince($0.fetchedAt) > 30 * 60 } ?? true }
+    var isStale: Bool { isStale(at: Date()) }
+
+    func isStale(at date: Date) -> Bool {
+        conditions.map { date.timeIntervalSince($0.fetchedAt) > 30 * 60 } ?? true
+    }
 
     func effectiveParameters(base: RainParameters) -> RainParameters {
         guard enabled, let conditions else { return base }
@@ -40,6 +46,7 @@ final class WeatherController: ObservableObject {
     }
 
     func setEnabled(_ value: Bool) {
+        invalidateRequests()
         enabled = value
         defaults.set(value, forKey: AppSettings.weatherEnabledKey)
         if value { start() } else { refreshTask?.cancel(); refreshTask = nil }
@@ -56,20 +63,27 @@ final class WeatherController: ObservableObject {
     }
 
     func search(_ raw: String) async {
+        searchGeneration += 1
+        let generation = searchGeneration
         let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard query.count >= 2 else { searchResults = []; return }
+        guard query.count >= 2 else { searchResults = []; isSearching = false; return }
         isSearching = true
-        defer { isSearching = false }
+        defer { if generation == searchGeneration { isSearching = false } }
         do {
-            searchResults = try await provider.searchCities(query)
+            let results = try await provider.searchCities(query)
+            guard generation == searchGeneration, !Task.isCancelled else { return }
+            searchResults = results
             errorMessage = searchResults.isEmpty ? "No matching cities found." : nil
         } catch {
+            guard generation == searchGeneration, !Task.isCancelled,
+                  !(error is CancellationError), (error as? URLError)?.code != .cancelled else { return }
             log.error("Weather search failed: \(error.localizedDescription, privacy: .public)")
             errorMessage = "City search failed: \(error.localizedDescription)"
         }
     }
 
     func select(_ selected: WeatherCity) {
+        invalidateRequests()
         city = selected
         conditions = nil
         searchResults = []
@@ -80,16 +94,28 @@ final class WeatherController: ObservableObject {
         if enabled { start() }
     }
 
+    private func invalidateRequests() {
+        searchGeneration += 1
+        refreshGeneration += 1
+        isSearching = false
+        searchResults = []
+        errorMessage = nil
+    }
+
     func refresh() async {
         guard enabled, let city else { return }
+        refreshGeneration += 1
+        let generation = refreshGeneration
         do {
             let latest = try await provider.currentConditions(for: city)
-            guard self.city?.id == city.id, enabled else { return }
+            guard generation == refreshGeneration, !Task.isCancelled, self.city?.id == city.id, enabled else { return }
             conditions = latest
             errorMessage = nil
             defaults.set(try? JSONEncoder().encode(WeatherCache(cityID: city.id, conditions: latest)),
                          forKey: AppSettings.weatherCacheKey)
         } catch {
+            guard generation == refreshGeneration, !Task.isCancelled, self.city?.id == city.id, enabled,
+                  !(error is CancellationError), (error as? URLError)?.code != .cancelled else { return }
             log.error("Weather refresh failed: \(error.localizedDescription, privacy: .public)")
             errorMessage = "Weather update failed: \(error.localizedDescription)"
         }

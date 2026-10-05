@@ -20,7 +20,10 @@ struct WallpaperColorCheck {
               let queue = device.makeCommandQueue() else {
             fatalError("Pass the built app's default.metallib path on a Metal-capable Mac")
         }
-        let library = try device.makeLibrary(URL: URL(fileURLWithPath: CommandLine.arguments[1]))
+        let libraryURL = URL(fileURLWithPath: CommandLine.arguments[1])
+        let library = try libraryURL.pathExtension == "metal"
+            ? device.makeLibrary(source: String(contentsOf: libraryURL, encoding: .utf8), options: nil)
+            : device.makeLibrary(URL: libraryURL)
         let wallpaper = try pipeline(device, library, "wallpaperFragment", .rgba16Float)
         let composite = try pipeline(device, library, "wetGlassFragment", .bgra8Unorm_srgb)
         let sampler = device.makeSamplerState(descriptor: MTLSamplerDescriptor())!

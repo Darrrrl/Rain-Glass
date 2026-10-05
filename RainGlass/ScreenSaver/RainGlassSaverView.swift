@@ -87,7 +87,7 @@ final class RainGlassSaverView: ScreenSaverView {
         view.colorPixelFormat = .bgra8Unorm_srgb
         view.clearColor = MTLClearColor(red: 0.045, green: 0.055, blue: 0.075, alpha: 1)
         view.framebufferOnly = true
-        view.enableSetNeedsDisplay = false
+        view.enableSetNeedsDisplay = true
         view.preferredFramesPerSecond = quality.targetFPS
         view.isPaused = true
         let renderer = MetalRenderer(device: device, diagnostics: RenderDiagnostics(),
@@ -99,6 +99,7 @@ final class RainGlassSaverView: ScreenSaverView {
         renderer.setSceneParameters(scene.rain, in: view)
         renderer.setQuality(quality, in: view)
         renderer.setAtmosphere(scene.atmosphere, in: view)
+        renderer.setWinter(snow: scene.snow, frost: scene.frost, frame: scene.frame, in: view)
         renderer.setWallpaper(texture: texture, revision: 1,
                               scaleMode: WallpaperScaleMode(rawValue: scene.scaleMode) ?? .fill,
                               zoom: scene.zoom, in: view)
@@ -169,7 +170,7 @@ final class RainGlassSaverView: ScreenSaverView {
               let size = info["size"] as? Int,
               count > 0, count <= 800, size > 0, size <= 50 * 1024 * 1024,
               let scene = try? JSONDecoder().decode(ScreenSaverScene.self, from: data),
-              scene.version == 1 else { return }
+              scene.isSupported else { return }
         transferScene = scene
         expectedChunks = count
         expectedBytes = size

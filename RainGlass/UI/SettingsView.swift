@@ -34,6 +34,17 @@ struct SettingsView: View {
     @State private var cityQuery = ""
     @State private var presetName = ""
 
+    @AppStorage(AppSettings.snowAmountKey) private var snowAmount = 0.0
+    @AppStorage(AppSettings.snowFlakeSizeKey) private var snowFlakeSize = 1.0
+    @AppStorage(AppSettings.snowSpeedKey) private var snowSpeed = 1.0
+    @AppStorage(AppSettings.snowWindKey) private var snowWind = 0.0
+    @AppStorage(AppSettings.frostCoverageKey) private var frostCoverage = 0.0
+    @AppStorage(AppSettings.frostDetailKey) private var frostDetail = 0.6
+    private var snow: SnowSettings {
+        SnowSettings(amount: snowAmount, flakeSize: snowFlakeSize, speed: snowSpeed, wind: snowWind).clamped()
+    }
+    private var frost: FrostSettings { FrostSettings(coverage: frostCoverage, detail: frostDetail).clamped() }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -143,7 +154,7 @@ struct SettingsView: View {
                                                                          fogReturnTime: fogReturnTime), audio: audio.settings,
                                           frame: WindowFrameSettings(
                                             layout: WindowPaneLayout(rawValue: frameLayoutRaw) ?? .off,
-                                            thickness: frameThickness))
+                                            thickness: frameThickness), snow: snow, frost: frost)
                     }
                 }
                 HStack {
@@ -165,6 +176,18 @@ struct SettingsView: View {
                     control("Refraction", \.refraction, in: 0...1, format: "%.2f")
                     control("Trail persistence", \.trailPersistence, in: 0.5...15, format: "%.1f s")
                 }
+            }
+            Section("Snow") {
+                winterControl("Amount", value: $snowAmount, range: 0...1)
+                winterControl("Flake size", value: $snowFlakeSize, range: 0.5...2)
+                winterControl("Speed", value: $snowSpeed, range: 0.2...2)
+                winterControl("Wind", value: $snowWind, range: -1...1)
+                Text("Set amount to zero to turn snowfall off.").font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Frost") {
+                winterControl("Coverage", value: $frostCoverage, range: 0...1)
+                winterControl("Crystal detail", value: $frostDetail, range: 0...1)
+                Text("Set coverage to zero to clear the frost.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Lightning") {
                 Toggle("Enable lightning", isOn: Binding(
@@ -211,12 +234,18 @@ struct SettingsView: View {
                     ForEach(weather.searchResults) { city in Button(city.title) { weather.select(city) } }
                     if let city = weather.city { Text(city.title) }
                     if let conditions = weather.conditions {
-                        Text(String(format: "Rain %.1f mm/h · Wind %.0f km/h · Clouds %.0f%%%@",
-                                    conditions.precipitation, conditions.windSpeed, conditions.cloudCover,
-                                    weather.isStale ? " · Cached" : ""))
-                            .font(.caption).foregroundStyle(.secondary)
+                        TimelineView(.periodic(from: .now, by: 30)) { context in
+                            VStack(alignment: .leading) {
+                                Text(String(format: "Rain %.1f mm/h · Wind %.0f km/h · Clouds %.0f%%%@",
+                                            conditions.precipitation, conditions.windSpeed, conditions.cloudCover,
+                                            weather.isStale(at: context.date) ? " · Cached" : ""))
+                                Text("Updated \(conditions.fetchedAt.formatted(date: .abbreviated, time: .shortened))")
+                            }.font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     if let error = weather.errorMessage { Text(error).foregroundStyle(.red) }
+                    Text("Live weather controls rain, wind, clouds, and lightning. Snow and frost stay manual.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Text("Weather data by Open-Meteo").font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -297,6 +326,16 @@ struct SettingsView: View {
             Text(title).frame(width: 125, alignment: .leading)
             Slider(value: Binding(get: { value }, set: { set($0); scenePresets.markCustom() }), in: 0...1)
             Text(String(format: "%.0f%%", value * 100)).monospacedDigit().frame(width: 70, alignment: .trailing)
+        }
+    }
+
+    private func winterControl(_ title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        HStack {
+            Text(title).frame(width: 125, alignment: .leading)
+            Slider(value: Binding(get: { value.wrappedValue }, set: {
+                value.wrappedValue = $0; scenePresets.markCustom()
+            }), in: range).accessibilityLabel(title)
+            Text(String(format: "%.2f", value.wrappedValue)).monospacedDigit().frame(width: 70)
         }
     }
 

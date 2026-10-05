@@ -14,28 +14,43 @@ struct RenderSnapshot {
 final class RenderDiagnostics: ObservableObject {
     @Published private(set) var snapshot = RenderSnapshot()
     @Published private(set) var errorMessage: String?
+    private var nextSnapshot = RenderSnapshot()
+    private var publishScheduled = false
+
+    private func schedulePublish() {
+        guard !publishScheduled else { return }
+        publishScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.publishScheduled = false
+            self.snapshot = self.nextSnapshot
+        }
+    }
 
     func reportError(_ message: String) { errorMessage = message }
     func clearError() { errorMessage = nil }
 
     func updateGPU(_ milliseconds: Double) {
-        snapshot.gpuFrameMilliseconds = milliseconds
+        nextSnapshot.gpuFrameMilliseconds = milliseconds
+        schedulePublish()
     }
 
-    func update(framesPerSecond: Double, cpuFrameMilliseconds: Double, gpuFrameMilliseconds: Double,
+    func update(framesPerSecond: Double, cpuFrameMilliseconds: Double,
                 renderTextureMegabytes: Double, drawableWidth: Int, drawableHeight: Int) {
-        snapshot = RenderSnapshot(
+        nextSnapshot = RenderSnapshot(
             framesPerSecond: framesPerSecond,
             cpuFrameMilliseconds: cpuFrameMilliseconds,
-            gpuFrameMilliseconds: gpuFrameMilliseconds,
+            gpuFrameMilliseconds: nextSnapshot.gpuFrameMilliseconds,
             renderTextureMegabytes: renderTextureMegabytes,
             drawableWidth: drawableWidth,
             drawableHeight: drawableHeight
         )
+        schedulePublish()
     }
 
     func updateSize(width: Int, height: Int) {
-        snapshot.drawableWidth = width
-        snapshot.drawableHeight = height
+        nextSnapshot.drawableWidth = width
+        nextSnapshot.drawableHeight = height
+        schedulePublish()
     }
 }

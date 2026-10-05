@@ -42,7 +42,7 @@ rainglass-desktop --status
 rainglass-desktop --settings
 ```
 
-Preset imports accept the macOS version 1 scene JSON wrapper. Shared rain, atmosphere, audio, and frame fields are decoded with the same names and legacy defaults. Weather and lock-screen animation remain macOS-only for now.
+Preset imports accept the macOS version 1 scene JSON wrapper. Shared rain, atmosphere, audio, and frame fields are decoded with the same names and legacy defaults. Version 2 winter presets are rejected until the ports support snow and frost. Weather, winter effects, and lock-screen animation remain macOS-only for now.
 
 ## Verification status
 

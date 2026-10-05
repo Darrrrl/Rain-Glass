@@ -43,7 +43,7 @@ struct WeatherCheck {
         assert(controller.searchResults.count == 1)
         controller.select(controller.searchResults[0])
         controller.setEnabled(true)
-        await controller.refresh()
+        while controller.conditions == nil { await Task.yield() }
         assert(controller.effectiveParameters(base: base).wind < 0)
         let restored = WeatherController(provider: FakeWeatherProvider(conditions: drizzle), defaults: defaults)
         assert(restored.city?.name == "Vienna")

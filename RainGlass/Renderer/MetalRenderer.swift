@@ -24,6 +24,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private let fogWipeTrailPipeline: MTLRenderPipelineState?
     private let wetGlassPipeline: MTLRenderPipelineState?
     private let fogPipeline: MTLComputePipelineState?
+    private let winter: WinterRenderer
     private let sampler: MTLSamplerState?
     private let diagnostics: RenderDiagnostics
     private var flashState: LightningFlashState?
@@ -78,6 +79,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         self.diagnostics = diagnostics
 
         let library = try? device.makeDefaultLibrary(bundle: libraryBundle)
+        winter = WinterRenderer(device: device, library: library, seed: UInt64.random(in: 0...UInt64.max))
         let wallpaperDescriptor = MTLRenderPipelineDescriptor()
         wallpaperDescriptor.vertexFunction = library?.makeFunction(name: "fullscreenVertex")
         wallpaperDescriptor.fragmentFunction = library?.makeFunction(name: "wallpaperFragment")
@@ -176,7 +178,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         if commandQueue == nil || wallpaperPipeline == nil || displayPipeline == nil ||
             waterDropletPipeline == nil || waterTrailPipeline == nil || fogWipeDropletPipeline == nil ||
             fogWipeTrailPipeline == nil || wetGlassPipeline == nil || fogPipeline == nil ||
-            sampler == nil {
+            sampler == nil || !winter.available {
             log.error("Metal pipeline or command queue creation failed")
             Task { @MainActor in diagnostics.reportError("The renderer could not start. Try restarting RainGlass.") }
         }
@@ -193,7 +195,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         guard raw.isEmpty || UInt64(raw) != nil else { return }
         guard rainSeed != raw else { return }
         rainSeed = raw
-        simulation.reset(seed: UInt64(raw) ?? UInt64.random(in: UInt64.min...UInt64.max))
+        let seed = UInt64(raw) ?? UInt64.random(in: UInt64.min...UInt64.max)
+        simulation.reset(seed: seed)
+        winter.reset(seed: seed)
         previousDropPositions.removeAll(keepingCapacity: true)
         fogDensity = nil
         fogNext = nil
@@ -226,7 +230,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         guard let view = observedView else { return }
         let visible = !respectsWindowOcclusion || view.window?.occlusionState.contains(.visible) == true
         view.isPaused = !visible || manuallyPaused
-        if visible && !manuallyPaused {
+        if visible {
             lastFrameTime = 0
             view.needsDisplay = true
         }
@@ -287,6 +291,12 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     @MainActor
+    func setWinter(snow: SnowSettings, frost: FrostSettings, frame: WindowFrameSettings, in view: MTKView) {
+        winter.configure(snow: snow, frost: frost, frame: frame)
+        view.needsDisplay = true
+    }
+
+    @MainActor
     func setWallpaper(texture: MTLTexture?, revision: Int, scaleMode: WallpaperScaleMode,
                       zoom: Double, in view: MTKView) {
         let newZoom = Float(min(3, max(1, zoom)))
@@ -309,7 +319,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         let start = CFAbsoluteTimeGetCurrent()
-        let frameElapsed = lastFrameTime == 0 ? 0 : min(0.1, start - lastFrameTime)
+        let frameElapsed = manuallyPaused || lastFrameTime == 0 ? 0 : min(0.1, start - lastFrameTime)
         lastFrameTime = start
         let atmosphereFraction = min(1, frameElapsed / 0.6)
         func approach(_ current: Double, _ target: Double) -> Double {
@@ -321,11 +331,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         atmosphere.fogSoftness = approach(atmosphere.fogSoftness, targetAtmosphere.fogSoftness)
         atmosphere.fogReturnTime = approach(atmosphere.fogReturnTime, targetAtmosphere.fogReturnTime)
         simulation.resize(to: view.bounds.size)
+        winter.prepare(quality: quality, size: view.bounds.size)
         simulationAccumulator += Float(frameElapsed)
         let fixedStep: Float = quality == .eco ? 1.0 / 60.0 : 1.0 / 120.0
         var steps = 0
         while simulationAccumulator >= fixedStep && steps < 4 {
             simulation.step(dt: fixedStep)
+            winter.step(dt: fixedStep)
             simulationAccumulator -= fixedStep
             steps += 1
         }
@@ -354,6 +366,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         if width > 0, height > 0, let wallpaperTexture {
             updateBackgroundIfNeeded(texture: wallpaperTexture, width: width, height: height, commandBuffer: commandBuffer)
         }
+
+        winter.encode(commandBuffer: commandBuffer, width: width, height: height, points: view.bounds.size)
 
         let waterWidth = max(1, (width + quality.waterScale - 1) / quality.waterScale)
         let waterHeightPixels = max(1, (height + quality.waterScale - 1) / quality.waterScale)
@@ -515,7 +529,17 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         }
         if waterEncoded, let sharp = sharpBackground, let soft = blurredBackground ?? sharpBackground,
            let waterHeight, let wetGlassPipeline, let sampler {
-            encoder.setRenderPipelineState(wetGlassPipeline)
+            let useWinter = winter.snowTexture != nil || winter.frostTexture != nil || winter.contactTexture != nil
+            encoder.setRenderPipelineState(useWinter ? (winter.glassPipeline ?? wetGlassPipeline) : wetGlassPipeline)
+            if useWinter {
+                encoder.setFragmentTexture(winter.snowTexture ?? waterHeight, index: 5)
+                encoder.setFragmentTexture(winter.frostTexture ?? waterHeight, index: 6)
+                encoder.setFragmentTexture(winter.contactTexture ?? waterHeight, index: 7)
+                var winterSettings = SIMD4<Float>(winter.snowTexture == nil ? 0 : 1,
+                    winter.frostTexture == nil ? 0 : winter.coverage,
+                    winter.contactTexture == nil ? 0 : 1, 0)
+                encoder.setFragmentBytes(&winterSettings, length: MemoryLayout<SIMD4<Float>>.stride, index: 3)
+            }
             encoder.setFragmentTexture(sharp, index: 0)
             encoder.setFragmentTexture(soft, index: 1)
             encoder.setFragmentTexture(waterHeight, index: 2)
@@ -578,11 +602,10 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let waterBytes = (waterHeight?.width ?? 0) * (waterHeight?.height ?? 0) * 2
         let fogBytes = (fogDensity?.width ?? 0) * (fogDensity?.height ?? 0) * 3
         let fogBlurBytes = (foggedBackground?.width ?? 0) * (foggedBackground?.height ?? 0) * 8
-        let textureMegabytes = Double(sharpBytes + blurBytes + waterBytes + fogBytes + fogBlurBytes) / 1_048_576
+        let textureMegabytes = Double(sharpBytes + blurBytes + waterBytes + fogBytes + fogBlurBytes + winter.textureBytes) / 1_048_576
         diagnostics.update(
             framesPerSecond: Double(sampleFrames) / elapsed,
             cpuFrameMilliseconds: sampleCPUSeconds * 1_000 / Double(sampleFrames),
-            gpuFrameMilliseconds: diagnostics.snapshot.gpuFrameMilliseconds,
             renderTextureMegabytes: textureMegabytes,
             drawableWidth: width,
             drawableHeight: height

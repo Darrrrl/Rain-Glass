@@ -294,6 +294,21 @@ mod tests {
         assert_eq!(file.preset.atmosphere.fog_return_time, 18.0);
     }
     #[test]
+    fn winter_presets_are_rejected_until_ports_support_them() {
+        let file = PresetFile {
+            version: 2,
+            preset: ScenePreset {
+                id: "winter".into(), name: "Quiet Snow".into(),
+                rain: RainParameters::default(), atmosphere: AtmosphereSettings::default(),
+                audio: AudioSettings::default(), frame: WindowFrameSettings::default(),
+            },
+        };
+        let mut json = serde_json::to_value(file).unwrap();
+        json["preset"]["snow"] = serde_json::json!({"amount":0.35,"flakeSize":1,"speed":0.65,"wind":0.12});
+        assert_eq!(PresetFile::parse(&json.to_string()).unwrap_err(), "Unsupported preset version");
+    }
+
+    #[test]
     fn invalid_preset_values_are_rejected() {
         let mut value = serde_json::to_value(PresetFile {
             version: 1,

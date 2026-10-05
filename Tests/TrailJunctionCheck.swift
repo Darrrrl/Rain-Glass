@@ -18,7 +18,10 @@ struct TrailJunctionCheck {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
             throw NSError(domain: "TrailJunctionCheck", code: 1)
         }
-        let library = try device.makeLibrary(URL: URL(fileURLWithPath: CommandLine.arguments[1]))
+        let libraryURL = URL(fileURLWithPath: CommandLine.arguments[1])
+        let library = try libraryURL.pathExtension == "metal"
+            ? device.makeLibrary(source: String(contentsOf: libraryURL, encoding: .utf8), options: nil)
+            : device.makeLibrary(URL: libraryURL)
         func pipeline(vertex: String, fragment: String, format: MTLPixelFormat,
                       maxBlend: Bool = false) throws -> MTLRenderPipelineState {
             let descriptor = MTLRenderPipelineDescriptor()

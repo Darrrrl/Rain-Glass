@@ -81,8 +81,14 @@ final class ScreenSaverScenePublisher: ObservableObject {
         func number(_ key: String, fallback: Double) -> Double {
             (defaults.object(forKey: key) as? Double) ?? fallback
         }
+        let snow = SnowSettings(amount: number(AppSettings.snowAmountKey, fallback: 0),
+                                flakeSize: number(AppSettings.snowFlakeSizeKey, fallback: 1),
+                                speed: number(AppSettings.snowSpeedKey, fallback: 1),
+                                wind: number(AppSettings.snowWindKey, fallback: 0)).clamped()
+        let frost = FrostSettings(coverage: number(AppSettings.frostCoverageKey, fallback: 0),
+                                  detail: number(AppSettings.frostDetailKey, fallback: 0.6)).clamped()
         let scene = ScreenSaverScene(
-            version: 1, wallpaperFileName: wallpaperFileName,
+            version: snow.amount > 0 || frost.coverage > 0 ? 2 : 1, wallpaperFileName: wallpaperFileName,
             scaleMode: model.wallpaper.scaleMode.rawValue, zoom: model.wallpaper.zoom,
             rain: model.weather.effectiveParameters(base: model.rainSettings.parameters),
             atmosphere: AtmosphereSettings(
@@ -95,7 +101,7 @@ final class ScreenSaverScenePublisher: ObservableObject {
                 layout: WindowPaneLayout(rawValue: defaults.string(forKey: AppSettings.windowPaneLayoutKey) ?? "") ?? .off,
                 thickness: number(AppSettings.windowFrameThicknessKey, fallback: 12)),
             quality: defaults.string(forKey: AppSettings.renderQualityKey) ?? RenderQuality.balanced.rawValue,
-            seed: defaults.string(forKey: AppSettings.rainSeedKey) ?? "")
+            seed: defaults.string(forKey: AppSettings.rainSeedKey) ?? "", snow: snow, frost: frost)
         return scene
     }
 }

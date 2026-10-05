@@ -11,12 +11,15 @@ struct ScenePreset: Codable, Identifiable, Equatable {
     var atmosphere: AtmosphereSettings
     var audio: AudioSettings
     var frame: WindowFrameSettings = .init()
+    var snow: SnowSettings = .init()
+    var frost: FrostSettings = .init()
 
-    private enum CodingKeys: String, CodingKey { case id, name, rain, atmosphere, audio, frame }
+    private enum CodingKeys: String, CodingKey { case id, name, rain, atmosphere, audio, frame, snow, frost }
     init(id: UUID, name: String, rain: RainParameters, atmosphere: AtmosphereSettings,
-         audio: AudioSettings, frame: WindowFrameSettings = .init()) {
+         audio: AudioSettings, frame: WindowFrameSettings = .init(),
+         snow: SnowSettings = .init(), frost: FrostSettings = .init()) {
         self.id = id; self.name = name; self.rain = rain; self.atmosphere = atmosphere
-        self.audio = audio; self.frame = frame
+        self.audio = audio; self.frame = frame; self.snow = snow; self.frost = frost
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -26,6 +29,8 @@ struct ScenePreset: Codable, Identifiable, Equatable {
         atmosphere = try values.decode(AtmosphereSettings.self, forKey: .atmosphere)
         audio = try values.decode(AudioSettings.self, forKey: .audio)
         frame = try values.decodeIfPresent(WindowFrameSettings.self, forKey: .frame) ?? .init()
+        snow = try values.decodeIfPresent(SnowSettings.self, forKey: .snow) ?? .init()
+        frost = try values.decodeIfPresent(FrostSettings.self, forKey: .frost) ?? .init()
     }
 }
 
@@ -48,7 +53,7 @@ private enum PresetError: LocalizedError {
 }
 
 enum BuiltInScene: String, CaseIterable, Identifiable {
-    case cozyWindow, lightDrizzle, autumnStorm, nightRain, sleep
+    case cozyWindow, lightDrizzle, autumnStorm, nightRain, sleep, quietSnow, frostedWindow
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -57,13 +62,34 @@ enum BuiltInScene: String, CaseIterable, Identifiable {
         case .autumnStorm: "Autumn Storm"
         case .nightRain: "Night Rain"
         case .sleep: "Sleep"
+        case .quietSnow: "Quiet Snow"
+        case .frostedWindow: "Frosted Window"
         }
     }
     var preset: ScenePreset {
         var rain = RainParameters.rain
         var audio = AudioSettings()
         var atmosphere = AtmosphereSettings()
+        var snow = SnowSettings()
+        var frost = FrostSettings()
         switch self {
+        case .quietSnow, .frostedWindow:
+            rain.intensity = 0
+            rain.dropCount = 0
+            rain.lightningEnabled = false
+            rain.stormFrequency = 0
+            atmosphere.condensation = 0.12
+            snow.amount = self == .quietSnow ? 0.35 : 0
+            snow.speed = 0.65
+            snow.wind = 0.12
+            frost.coverage = self == .quietSnow ? 0.2 : 0.65
+            audio.master = 0.22
+            audio.window = 0
+            audio.distant = 0
+            audio.glassTaps = 0
+            audio.thunder = 0
+            audio.wind = 0.12
+            audio.room = 0.18
         case .cozyWindow:
             rain.intensity = 0.58
             rain.dropCount = 3_200
@@ -103,7 +129,7 @@ enum BuiltInScene: String, CaseIterable, Identifiable {
             audio.wind = 0.03
             audio.thunder = 0
         }
-        return ScenePreset(id: UUID(), name: title, rain: rain, atmosphere: atmosphere, audio: audio)
+        return ScenePreset(id: UUID(), name: title, rain: rain, atmosphere: atmosphere, audio: audio, snow: snow, frost: frost)
     }
 }
 
@@ -146,6 +172,12 @@ final class ScenePresetStore: ObservableObject {
         defaults.set(preset.atmosphere.fogReturnTime, forKey: AppSettings.fogReturnTimeKey)
         defaults.set(preset.frame.layout.rawValue, forKey: AppSettings.windowPaneLayoutKey)
         defaults.set(preset.frame.thickness, forKey: AppSettings.windowFrameThicknessKey)
+        defaults.set(preset.snow.amount, forKey: AppSettings.snowAmountKey)
+        defaults.set(preset.snow.flakeSize, forKey: AppSettings.snowFlakeSizeKey)
+        defaults.set(preset.snow.speed, forKey: AppSettings.snowSpeedKey)
+        defaults.set(preset.snow.wind, forKey: AppSettings.snowWindKey)
+        defaults.set(preset.frost.coverage, forKey: AppSettings.frostCoverageKey)
+        defaults.set(preset.frost.detail, forKey: AppSettings.frostDetailKey)
         selectionID = id
         defaults.set(id, forKey: AppSettings.sceneSelectionKey)
         errorMessage = nil
@@ -157,14 +189,15 @@ final class ScenePresetStore: ObservableObject {
     }
 
     func save(name raw: String, rain: RainParameters, atmosphere: AtmosphereSettings,
-              audio: AudioSettings, frame: WindowFrameSettings = .init()) {
+              audio: AudioSettings, frame: WindowFrameSettings = .init(),
+              snow: SnowSettings = .init(), frost: FrostSettings = .init()) {
         let name = String(raw.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
         guard !name.isEmpty else { errorMessage = "Enter a preset name."; return }
         guard !presets.contains(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) else {
             errorMessage = PresetError.duplicateName.localizedDescription; return
         }
         let preset = ScenePreset(id: UUID(), name: name, rain: rain, atmosphere: atmosphere,
-                                 audio: audio, frame: frame)
+                                 audio: audio, frame: frame, snow: snow, frost: frost)
         presets.append(preset)
         selectionID = "scene:\(preset.id.uuidString)"
         defaults.set(selectionID, forKey: AppSettings.sceneSelectionKey)
@@ -209,14 +242,14 @@ final class ScenePresetStore: ObservableObject {
     func exportData(for preset: ScenePreset) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(PresetFile(version: 1, preset: preset))
+        return try encoder.encode(PresetFile(version: preset.snow.amount > 0 || preset.frost.coverage > 0 ? 2 : 1, preset: preset))
     }
 
     func importData(_ data: Data) throws {
         let file: PresetFile
         do { file = try JSONDecoder().decode(PresetFile.self, from: data) }
         catch { throw PresetError.invalidValues }
-        guard file.version == 1 else { throw PresetError.unsupportedVersion }
+        guard (1...2).contains(file.version) else { throw PresetError.unsupportedVersion }
         guard Self.valid(file.preset) else { throw PresetError.invalidValues }
         guard !presets.contains(where: { $0.name.localizedCaseInsensitiveCompare(file.preset.name) == .orderedSame }) else {
             throw PresetError.duplicateName
@@ -224,8 +257,6 @@ final class ScenePresetStore: ObservableObject {
         var preset = file.preset
         preset.id = UUID()
         presets.append(preset)
-        selectionID = "scene:\(preset.id.uuidString)"
-        defaults.set(selectionID, forKey: AppSettings.sceneSelectionKey)
         persist()
     }
 
@@ -240,6 +271,7 @@ final class ScenePresetStore: ObservableObject {
                       atmosphere.condensation, atmosphere.haze, atmosphere.imperfections,
                       atmosphere.fogSoftness, atmosphere.fogReturnTime, preset.frame.thickness]
         return !preset.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && preset.name.count <= 40 &&
+            preset.snow.isValid && preset.frost.isValid &&
             values.allSatisfy(\.isFinite) && rain == rain.clamped() && audio == audio.clamped() &&
             (0...1).contains(atmosphere.condensation) && (0...1).contains(atmosphere.haze) &&
             (0...1).contains(atmosphere.imperfections) && (0...1).contains(atmosphere.fogSoftness) &&

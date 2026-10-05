@@ -7,7 +7,10 @@ struct FogHistoryCheck {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
             throw NSError(domain: "FogHistoryCheck", code: 1)
         }
-        let library = try device.makeLibrary(URL: URL(fileURLWithPath: CommandLine.arguments[1]))
+        let libraryURL = URL(fileURLWithPath: CommandLine.arguments[1])
+        let library = try libraryURL.pathExtension == "metal"
+            ? device.makeLibrary(source: String(contentsOf: libraryURL, encoding: .utf8), options: nil)
+            : device.makeLibrary(URL: libraryURL)
         let evolution = try device.makeComputePipelineState(function: library.makeFunction(name: "fogEvolutionKernel")!)
         var wipePipelines: [String: MTLRenderPipelineState] = [:]
         for fragment in ["fogWipeDropletFragment", "fogWipeTrailFragment"] {

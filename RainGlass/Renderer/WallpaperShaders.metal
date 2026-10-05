@@ -293,3 +293,179 @@ kernel void fogEvolutionKernel(texture2d<float, access::sample> previous [[textu
     float cleared = wipe.sample(linearSampler, uv).r;
     output.write(float4(min(recovered, base * (1.0 - cleared)), 0, 0, 1), id);
 }
+
+fragment float4 winterGlassFragment(
+    FullscreenVertex in [[stage_in]],
+    texture2d<float> sharp [[texture(0)]],
+    texture2d<float> blurred [[texture(1)]],
+    texture2d<float> water [[texture(2)]],
+    texture2d<float> fog [[texture(3)]],
+    texture2d<float> fogged [[texture(4)]],
+    texture2d<float> snow [[texture(5)]],
+    texture2d<float> frost [[texture(6)]],
+    texture2d<float> contacts [[texture(7)]],
+    sampler imageSampler [[sampler(0)]],
+    constant float4& settings [[buffer(0)]],
+    constant float& exposureEV [[buffer(1)]],
+    constant float4& glass [[buffer(2)]],
+    constant float4& winter [[buffer(3)]]
+) {
+    float2 uv = in.position.xy / settings.xy;
+    float2 pixel = 1.0 / float2(water.get_width(), water.get_height());
+    float height = water.sample(imageSampler, uv).r;
+    float2 slope = float2(
+        water.sample(imageSampler, uv + float2(pixel.x, 0)).r - water.sample(imageSampler, uv - float2(pixel.x, 0)).r,
+        water.sample(imageSampler, uv + float2(0, pixel.y)).r - water.sample(imageSampler, uv - float2(0, pixel.y)).r
+    );
+    float2 refractedUV = clamp(uv - slope * settings.z * 0.018, 0.0, 1.0);
+    float3 clearColor = sharp.sample(imageSampler, refractedUV).rgb;
+    float3 softColor = blurred.sample(imageSampler, uv).rgb;
+    if (winter.x > 0.0) {
+        float4 sharpSnow = snow.sample(imageSampler, refractedUV);
+        float4 softSnow = snow.sample(imageSampler, uv);
+        clearColor = clearColor * (1.0 - sharpSnow.a) + sharpSnow.rgb;
+        softColor = softColor * (1.0 - softSnow.a) + softSnow.rgb;
+    }
+    float focus = saturate(height * 1.7);
+    float3 color = mix(softColor, clearColor, settings.w > 0 ? focus : 1.0);
+    if (glass.x > 0.0 || glass.y > 0.0 || glass.z > 0.0) {
+        float fogValue = fog.sample(imageSampler, uv).r;
+        float condensation = saturate(glass.x * fogValue *
+                                      (1.0 - smoothstep(0.08, 0.5, height)));
+        color = mix(color, fogged.sample(imageSampler, uv).rgb, condensation * glass.w);
+        float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
+        color = mix(color, float3(luma), condensation * 0.08);
+        color += glass.y * (fogValue - 0.5) * 0.025;
+        float imperfections = smoothstep(0.91, 0.995, fogValue);
+        color *= 1.0 - imperfections * glass.z * 0.02;
+    }
+    float edge = saturate(length(slope) * 0.35);
+    color *= 1 - edge * 0.09;
+    color += float3(0.012) * edge;
+    if (winter.y > 0.0) {
+        float2 ice = frost.sample(imageSampler, uv).rg;
+        float reach = winter.y * 0.48;
+        float mask = (1.0 - smoothstep(reach - 0.035, reach + 0.035, ice.g)) * saturate(winter.y * 8.0);
+        float veil = mask * (0.04 + ice.r * 0.38);
+        float3 frozen = mix(color, fogged.sample(imageSampler, uv).rgb, mask * 0.42);
+        color = mix(frozen, float3(0.79, 0.88, 0.94), veil);
+        color += ice.r * mask * 0.035;
+    }
+    if (winter.z > 0.0) {
+        float4 contact = contacts.sample(imageSampler, uv);
+        color = color * (1.0 - contact.a) + contact.rgb;
+    }
+    return float4(color * exp2(exposureEV), 1);
+}
+
+struct SnowVertex {
+    float4 position [[position]];
+    float2 local;
+    float opacity;
+    float3 style;
+};
+
+struct SnowInstance {
+    float4 geometry;
+    float4 style;
+};
+
+vertex SnowVertex snowVertex(uint vertexID [[vertex_id]], uint instanceID [[instance_id]],
+                             const device SnowInstance* flakes [[buffer(0)]],
+                             constant float2& points [[buffer(1)]]) {
+    const float2 corners[6] = {float2(-1,-1), float2(1,-1), float2(-1,1),
+                               float2(-1,1), float2(1,-1), float2(1,1)};
+    float4 flake = flakes[instanceID].geometry;
+    float2 uv = flake.xy + corners[vertexID] * flake.z * 2.0 / points;
+    SnowVertex out;
+    out.position = float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0, 1);
+    out.local = corners[vertexID];
+    out.opacity = flake.w;
+    out.style = flakes[instanceID].style.xyz;
+    return out;
+}
+
+fragment float4 snowFragment(SnowVertex in [[stage_in]]) {
+    float radius = dot(in.local, in.local);
+    float alpha = exp(-radius * 5.0) * in.opacity;
+    if (in.style.x > 0.5) {
+        float icy = exp(-radius * 7.0) * 0.48;
+        for (int arm = 0; arm < 7; ++arm) {
+            if (float(arm) >= in.style.z) { break; }
+            float angle = (float(arm) + in.style.y * 0.36) * 6.2831853 / in.style.z;
+            float2 direction = float2(cos(angle), sin(angle));
+            float along = dot(in.local, direction);
+            float across = abs(in.local.x * direction.y - in.local.y * direction.x);
+            float reach = 0.40 + 0.16 * fract(in.style.y * 17.0 + float(arm) * 0.37);
+            float segment = exp(-across * across * 160.0) * smoothstep(0.0, 0.12, along) *
+                            (1.0 - smoothstep(reach - 0.12, reach, along));
+            icy = max(icy, segment);
+        }
+        alpha = icy * in.opacity;
+    }
+    return float4(float3(0.88, 0.94, 1.0) * alpha, alpha);
+}
+
+float frostSegment(float2 p, float2 a, float2 b) {
+    float2 ab = b - a;
+    return length(p - a - ab * saturate(dot(p - a, ab) / max(dot(ab, ab), 0.001)));
+}
+
+// Jittered fracture cells give angular boundaries; seeded gaps keep them sparse.
+float frostFracture(float2 p, float seed, float detail, float antialias) {
+    const float spacing = 132.0;
+    float2 cell = floor(p / spacing);
+    float nearest = 1e10;
+    float second = 1e10;
+    float2 firstID = 0;
+    float2 secondID = 0;
+    float2 firstSite = 0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            float2 id = cell + float2(x, y);
+            float2 jitter = float2(fogHash(id + seed), fogHash(id.yx + seed * 1.37));
+            float2 site = (id + 0.16 + jitter * 0.68) * spacing;
+            float distance = dot(p - site, p - site);
+            if (distance < nearest) {
+                second = nearest; secondID = firstID;
+                nearest = distance; firstID = id; firstSite = site;
+            } else if (distance < second) {
+                second = distance; secondID = id;
+            }
+        }
+    }
+    float boundary = (sqrt(second) - sqrt(nearest)) * 0.5;
+    // A symmetric hash makes the same fracture visible from either adjacent cell.
+    float gate = fogHash((firstID + secondID) * 0.71 + abs(firstID - secondID) * 0.29 + seed);
+    float primary = gate > 0.54 ? (1.0 - smoothstep(0.2, max(0.7, antialias * 0.85), boundary)) * 0.78 : 0.0;
+    float fine = 0.0;
+    for (int branch = 0; branch < 3; ++branch) {
+        if (detail < (float(branch) + 0.5) / 3.0) { break; }
+        float angle = 6.2831853 * fogHash(firstID + seed + float2(branch * 13, branch * 7));
+        float2 direction = float2(cos(angle), sin(angle));
+        float2 start = firstSite + direction * (52.0 + float(branch) * 8.0);
+        float2 kink = start + direction * 17.0 + float2(-direction.y, direction.x) * (branch % 2 == 0 ? 8.0 : -8.0);
+        float2 end = kink + direction * (12.0 + detail * 13.0);
+        float distance = min(frostSegment(p, start, kink), frostSegment(p, kink, end));
+        fine = max(fine, (1.0 - smoothstep(0.2, max(0.7, antialias), distance)) * 0.45);
+    }
+    return max(primary, fine);
+}
+
+kernel void frostPatternKernel(texture2d<float, access::write> output [[texture(0)]],
+                               constant float4& settings [[buffer(0)]],
+                               constant float4& panes [[buffer(1)]],
+                               uint2 id [[thread_position_in_grid]]) {
+    if (id.x >= output.get_width() || id.y >= output.get_height()) { return; }
+    float2 uv = (float2(id) + 0.5) / float2(output.get_width(), output.get_height());
+    float2 paneSize = max(float2(1.0), settings.xy / panes.xy);
+    float2 paneID = floor(uv * panes.xy);
+    float2 point = fract(uv * panes.xy) * paneSize;
+    float seed = settings.w + paneID.x * 17.0 + paneID.y * 31.0;
+    float aa = max(settings.x / output.get_width(), settings.y / output.get_height());
+    float crystal = frostFracture(point, seed, settings.z, aa);
+    float edge = min(min(point.x, paneSize.x - point.x), min(point.y, paneSize.y - point.y));
+    float grain = fogNoise(point * 0.035 + seed);
+    float depth = max(0.0, edge / min(paneSize.x, paneSize.y) + (grain - 0.5) * 0.12);
+    output.write(float4(crystal * (0.65 + grain * 0.35), depth, 0, 1), id);
+}

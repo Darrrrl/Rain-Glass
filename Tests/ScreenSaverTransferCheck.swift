@@ -47,10 +47,20 @@ struct ScreenSaverTransferCheck {
         let saverURL = URL(fileURLWithPath: CommandLine.arguments[1])
         let imageURL = URL(fileURLWithPath: CommandLine.arguments[2])
         let image = try Data(contentsOf: imageURL)
-        let scene = ScreenSaverScene(version: 1, wallpaperFileName: "transferred.png",
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RainGlassSaverTransfer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        setenv("RAINGLASS_SAVER_TEST_DIRECTORY", directory.path, 1)
+        let scene = ScreenSaverScene(version: 2, wallpaperFileName: "transferred.png",
                                      scaleMode: "fill", zoom: 1, rain: .rain,
-                                     atmosphere: .init(), frame: .init(), quality: "eco", seed: "7")
+                                     atmosphere: .init(), frame: .init(), quality: "eco", seed: "7",
+                                     snow: SnowSettings(amount: 0.3), frost: FrostSettings(coverage: 0.4))
         let responder = SceneResponder(image: image, scene: try JSONEncoder().encode(scene))
+        if CommandLine.arguments.contains("--stored") {
+            try image.write(to: directory.appendingPathComponent(scene.wallpaperFileName))
+            try ScreenSaverSceneStore.write(scene, in: directory)
+        }
         _ = NSApplication.shared
         guard let bundle = Bundle(url: saverURL), bundle.load(),
               let saverClass = bundle.principalClass as? ScreenSaverView.Type,
@@ -62,9 +72,13 @@ struct ScreenSaverTransferCheck {
         window.contentView = view
         view.startAnimation()
         RunLoop.main.run(until: Date().addingTimeInterval(5))
-        assert(responder.requests > 0, "The saver must request a scene when shared storage is unavailable")
+        if CommandLine.arguments.contains("--stored") {
+            assert(responder.requests == 0, "Stored scenes must load without requesting a transfer")
+        } else {
+            assert(responder.requests > 0, "The saver must request a scene when shared storage is unavailable")
+        }
         assert(view.subviews.contains { $0 is MTKView }, "The transferred scene must start the Metal renderer")
         view.stopAnimation()
-        print("Screen saver scene transfer, bundle loading, and renderer startup checked")
+        print("Screen saver \(CommandLine.arguments.contains("--stored") ? "stored scene" : "scene transfer"), bundle loading, and renderer startup checked")
     }
 }

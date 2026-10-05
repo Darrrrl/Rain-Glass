@@ -1,4 +1,10 @@
 enum AppSettings {
+    static let snowAmountKey = "snow.amount.v1"
+    static let snowFlakeSizeKey = "snow.flakeSize.v1"
+    static let snowSpeedKey = "snow.speed.v1"
+    static let snowWindKey = "snow.wind.v1"
+    static let frostCoverageKey = "frost.coverage.v1"
+    static let frostDetailKey = "frost.detail.v1"
     static let developerOverlayKey = "developerOverlayEnabled"
     static let wallpaperBookmarkKey = "wallpaperBookmark"
     static let wallpaperScaleModeKey = "wallpaperScaleMode"
